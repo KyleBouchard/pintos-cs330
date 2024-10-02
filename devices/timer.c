@@ -135,7 +135,6 @@ timer_print_stats (void) {
 static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	enum intr_level old_level;
-	struct list_elem next;
 
 	ticks++;
 	thread_tick ();
