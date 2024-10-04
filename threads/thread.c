@@ -161,6 +161,13 @@ thread_print_stats (void) {
 			idle_ticks, kernel_ticks, user_ticks);
 }
 
+bool
+thread_less_priority (const struct list_elem *a,
+		const struct list_elem *b, void *aux UNUSED) {
+	return thread_get_effective_priority (list_entry (a, struct thread, elem))
+		<= thread_get_effective_priority (list_entry (b, struct thread, elem));
+}
+
 /* Creates a new kernel thread named NAME with the given initial
    PRIORITY, which executes FUNCTION passing AUX as the argument,
    and adds it to the ready queue.  Returns the thread identifier
@@ -207,6 +214,9 @@ thread_create (const char *name, int priority,
 	/* Add to run queue. */
 	thread_unblock (t);
 
+	if (thread_get_priority() < thread_get_effective_priority (t))
+		thread_yield();
+
 	return tid;
 }
 
@@ -239,7 +249,7 @@ thread_unblock (struct thread *t) {
 	ASSERT (is_thread (t));
 
 	old_level = intr_disable ();
-	ASSERT (t->status == THREAD_BLOCKED);
+	ASSERT (t->status == THREAD_BLOCKED);	
 	list_push_back (&ready_list, &t->elem);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
@@ -312,12 +322,26 @@ thread_yield (void) {
 void
 thread_set_priority (int new_priority) {
 	thread_current ()->priority = new_priority;
+
+	if (
+		!list_empty(&ready_list) &&
+		thread_get_priority() < thread_get_effective_priority (list_entry(list_max(&ready_list, thread_less_priority, NULL), struct thread, elem))
+	) {
+		thread_yield();
+	}
 }
 
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) {
-	return thread_current ()->priority;
+	return thread_get_effective_priority (thread_current ());
+}
+
+int
+thread_get_effective_priority (struct thread *thread) {
+	return thread->priority < thread->donation
+		? thread->donation
+		: thread->priority;
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -408,6 +432,10 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
+	t->donation = PRI_MIN;
+
+	list_init(&t->locks);
+
 	t->magic = THREAD_MAGIC;
 }
 
@@ -420,8 +448,11 @@ static struct thread *
 next_thread_to_run (void) {
 	if (list_empty (&ready_list))
 		return idle_thread;
-	else
-		return list_entry (list_pop_front (&ready_list), struct thread, elem);
+	else {
+		struct thread *thread = list_entry (list_max (&ready_list, thread_less_priority, NULL), struct thread, elem);
+		list_remove(&thread->elem);
+		return thread;
+	}
 }
 
 /* Use iretq to launch the thread */
