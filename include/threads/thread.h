@@ -101,7 +101,8 @@ struct thread {
 		} donation;
 		struct {
 			int nice;                   /* Nice value. */
-			minifloat recent_cpu;
+			floater recent_cpu;
+			struct list_elem elem;      /*  */
 		} mlfqs;
 	};
 
