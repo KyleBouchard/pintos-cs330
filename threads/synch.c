@@ -202,11 +202,11 @@ lock_acquire (struct lock *lock) {
 	if (!thread_mlfqs) {
 		old_level = intr_disable ();
 		
-		thread_current ()->blocked_on = lock;
+		thread_current ()->donation.blocked_on = lock;
 		
-		for (struct lock *i = lock; i && i->holder; i = i->holder->blocked_on) {
-			if (i->holder->donation < thread_get_priority ())
-				i->holder->donation = thread_get_priority ();
+		for (struct lock *i = lock; i && i->holder; i = i->holder->donation.blocked_on) {
+			if (i->holder->donation.donation < thread_get_priority ())
+				i->holder->donation.donation = thread_get_priority ();
 		}
 	
 		intr_set_level (old_level);
@@ -218,8 +218,8 @@ lock_acquire (struct lock *lock) {
 	if (!thread_mlfqs) {
 		old_level = intr_disable ();
 		
-		thread_current ()->blocked_on = NULL;
-		list_push_back (&thread_current ()->locks, &lock->elem);
+		thread_current ()->donation.blocked_on = NULL;
+		list_push_back (&thread_current ()->donation.locks, &lock->elem);
 		lock->holder = thread_current ();
 		
 		intr_set_level (old_level);
@@ -254,8 +254,8 @@ lock_release_donation (struct lock *lock) {
 	list_remove(&lock->elem);
 
 	for (
-		struct list_elem *l = list_begin(&thread_current ()->locks);
-		l != list_end(&thread_current ()->locks);
+		struct list_elem *l = list_begin(&thread_current ()->donation.locks);
+		l != list_end(&thread_current ()->donation.locks);
 		l = list_next(l)
 	) {
 		struct lock *cur_lock = list_entry(l, struct lock, elem);
@@ -268,7 +268,7 @@ lock_release_donation (struct lock *lock) {
 			struct thread *waiter = list_entry(w, struct thread, elem);
 			int waiter_priority = thread_get_effective_priority (waiter);
 
-			if (thread_current ()->donation == waiter_priority) {
+			if (thread_current ()->donation.donation == waiter_priority) {
 				next_donation = waiter_priority;
 				break;
 			} else if (next_donation < waiter_priority) {
@@ -277,7 +277,7 @@ lock_release_donation (struct lock *lock) {
 		}
 	}
 
-	thread_current ()->donation = next_donation;
+	thread_current ()->donation.donation = next_donation;
 }
 
 /* Releases LOCK, which must be owned by the current thread.

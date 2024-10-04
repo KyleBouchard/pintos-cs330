@@ -113,6 +113,11 @@ thread_init (void) {
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
 	init_thread (initial_thread, "main", PRI_DEFAULT);
+	
+	if (thread_mlfqs) {
+		initial_thread->mlfqs.nice = 0;
+		initial_thread->mlfqs.recent_cpu = 0;
+	}
 	initial_thread->status = THREAD_RUNNING;
 	initial_thread->tid = allocate_tid ();
 }
@@ -148,6 +153,9 @@ thread_tick (void) {
 #endif
 	else
 		kernel_ticks++;
+
+	if (thread_mlfqs && t != idle_thread)
+		++t->mlfqs.recent_cpu;
 
 	/* Enforce preemption. */
 	if (++thread_ticks >= TIME_SLICE)
@@ -343,25 +351,35 @@ thread_get_priority (void) {
 int
 thread_get_effective_priority (struct thread *thread) {
 	if (thread_mlfqs) {
-		return thread->priority; // TODO
+		int new_priority = PRI_MAX - (thread_get_recent_cpu () / 4) - (thread_get_nice () * 2);
+		if (new_priority < PRI_MIN) new_priority = PRI_MIN;
+		if (new_priority > PRI_MAX) new_priority = PRI_MAX;
+
+		return (thread_current()->priority = new_priority);
 	} else {
-		return thread->priority < thread->donation
-			? thread->donation
+		return thread->priority < thread->donation.donation
+			? thread->donation.donation
 			: thread->priority;
 	}
 }
 
 /* Sets the current thread's nice value to NICE. */
 void
-thread_set_nice (int nice UNUSED) {
-	/* TODO: Your implementation goes here */
+thread_set_nice (int nice) {
+	ASSERT (thread_mlfqs);
+	ASSERT (nice <= 20);
+	ASSERT (-20 <= nice);
+
+	thread_current ()->mlfqs.nice = nice;
+	// TODO
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) {
-	/* TODO: Your implementation goes here */
-	return 0;
+	ASSERT (thread_mlfqs);
+
+	return thread_current ()->mlfqs.nice;
 }
 
 /* Returns 100 times the system load average. */
@@ -374,8 +392,10 @@ thread_get_load_avg (void) {
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) {
-	/* TODO: Your implementation goes here */
-	return 0;
+	ASSERT(thread_mlfqs);
+	int load_avg = thread_get_load_avg();
+	thread_current()->mlfqs.recent_cpu = (2 * load_avg)/(2 * load_avg + 1) * thread_get_recent_cpu () + thread_get_nice ();
+	return thread_current()->mlfqs.recent_cpu * 100;
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -440,13 +460,13 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	
 	if (thread_mlfqs) {
-		// TODO
+		t->mlfqs.nice = thread_get_nice ();
+		t->mlfqs.recent_cpu = thread_get_recent_cpu ();
 	} else {
 		t->priority = priority;
-		t->donation = PRI_MIN;
+		t->donation.donation = PRI_MIN;
+		list_init(&t->donation.locks);
 	}
-
-	list_init(&t->locks);
 
 	t->magic = THREAD_MAGIC;
 }

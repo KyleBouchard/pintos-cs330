@@ -139,6 +139,11 @@ timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 	thread_tick ();
 
+	if (thread_mlfqs && timer_ticks () % TIMER_FREQ == 0) {
+		thread_get_recent_cpu();
+		thread_get_nice(); // /?????
+	}
+
 	old_level = intr_disable ();
 	while (!list_empty(&thread_list))
 		thread_unblock (list_entry (list_pop_front (&thread_list), 

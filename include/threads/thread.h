@@ -8,6 +8,7 @@
 #ifdef VM
 #include "vm/vm.h"
 #endif
+#include "fixed-point.h"
 
 
 /* States in a thread's life cycle. */
@@ -92,9 +93,17 @@ struct thread {
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Base priority. */
-	int donation;                       /* Priority donation received. */
-	struct list locks;                  /* Locks currently owned. */
-	struct lock *blocked_on;            /* Lock currently blocked on. */
+	union {
+		struct {
+			int donation;               /* Priority donation received. */
+			struct list locks;          /* Locks currently owned. */
+			struct lock *blocked_on;    /* Lock currently blocked on. */
+		} donation;
+		struct {
+			int nice;                   /* Nice value. */
+			minifloat recent_cpu;
+		} mlfqs;
+	};
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
