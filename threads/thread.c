@@ -321,6 +321,9 @@ thread_yield (void) {
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
+	if (thread_mlfqs)
+		return;
+
 	thread_current ()->priority = new_priority;
 
 	if (
@@ -339,9 +342,13 @@ thread_get_priority (void) {
 
 int
 thread_get_effective_priority (struct thread *thread) {
-	return thread->priority < thread->donation
-		? thread->donation
-		: thread->priority;
+	if (thread_mlfqs) {
+		return thread->priority; // TODO
+	} else {
+		return thread->priority < thread->donation
+			? thread->donation
+			: thread->priority;
+	}
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -431,8 +438,13 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->status = THREAD_BLOCKED;
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
-	t->priority = priority;
-	t->donation = PRI_MIN;
+	
+	if (thread_mlfqs) {
+		// TODO
+	} else {
+		t->priority = priority;
+		t->donation = PRI_MIN;
+	}
 
 	list_init(&t->locks);
 

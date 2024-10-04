@@ -198,25 +198,32 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
 
-	old_level = intr_disable ();
-	thread_current ()->blocked_on = lock;
 	
-	for (struct lock *i = lock; i && i->holder; i = i->holder->blocked_on) {
-		if (i->holder->donation < thread_get_priority ())
-			i->holder->donation = thread_get_priority ();
+	if (!thread_mlfqs) {
+		old_level = intr_disable ();
+		
+		thread_current ()->blocked_on = lock;
+		
+		for (struct lock *i = lock; i && i->holder; i = i->holder->blocked_on) {
+			if (i->holder->donation < thread_get_priority ())
+				i->holder->donation = thread_get_priority ();
+		}
+	
+		intr_set_level (old_level);
 	}
 
-	intr_set_level (old_level);
 
 	sema_down (&lock->semaphore);
 
-	old_level = intr_disable ();
-	thread_current ()->blocked_on = NULL;
-
-	list_push_back (&thread_current ()->locks, &lock->elem);
-
-	lock->holder = thread_current ();
-	intr_set_level (old_level);
+	if (!thread_mlfqs) {
+		old_level = intr_disable ();
+		
+		thread_current ()->blocked_on = NULL;
+		list_push_back (&thread_current ()->locks, &lock->elem);
+		lock->holder = thread_current ();
+		
+		intr_set_level (old_level);
+	}
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -238,23 +245,13 @@ lock_try_acquire (struct lock *lock) {
 	return success;
 }
 
-/* Releases LOCK, which must be owned by the current thread.
-   This is lock_release function.
-
-   An interrupt handler cannot acquire a lock, so it does not
-   make sense to try to release a lock within an interrupt
-   handler. */
 void
-lock_release (struct lock *lock) {
-	enum intr_level old_level;
+lock_release_donation (struct lock *lock) {
 	int next_donation = PRI_MIN;
 
-	ASSERT (lock != NULL);
-	ASSERT (lock_held_by_current_thread (lock));
-
-	lock->holder = NULL;
-
-	old_level = intr_disable ();
+	ASSERT(!thread_mlfqs);
+	
+	list_remove(&lock->elem);
 
 	for (
 		struct list_elem *l = list_begin(&thread_current ()->locks);
@@ -263,9 +260,6 @@ lock_release (struct lock *lock) {
 	) {
 		struct lock *cur_lock = list_entry(l, struct lock, elem);
 		
-		if (cur_lock == lock)
-			continue;
-
 		for (
 			struct list_elem *w = list_begin(&cur_lock->semaphore.waiters);
 			w != list_end(&cur_lock->semaphore.waiters);
@@ -284,8 +278,31 @@ lock_release (struct lock *lock) {
 	}
 
 	thread_current ()->donation = next_donation;
+}
 
-	list_remove(&lock->elem);
+/* Releases LOCK, which must be owned by the current thread.
+   This is lock_release function.
+
+   An interrupt handler cannot acquire a lock, so it does not
+   make sense to try to release a lock within an interrupt
+   handler. */
+void
+lock_release (struct lock *lock) {
+	enum intr_level old_level;
+
+	ASSERT (lock != NULL);
+	ASSERT (lock_held_by_current_thread (lock));
+
+	lock->holder = NULL;
+
+	old_level = intr_disable ();
+
+	if (thread_mlfqs) {
+		// TODO
+	} else {
+		lock_release_donation(lock);
+	}
+
 	intr_set_level (old_level);
 
 	sema_up (&lock->semaphore);
