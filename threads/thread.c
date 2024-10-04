@@ -84,8 +84,9 @@ static tid_t allocate_tid (void);
 // setup temporal gdt first.
 static uint64_t gdt[3] = { 0, 0x00af9a000000ffff, 0x00cf92000000ffff };
 
+/* Calculates next value for load_avg and returns it. */
 static floater
-thread_calc_load_avg() {
+thread_calc_load_avg(void) {
 	ASSERT(thread_mlfqs);
 
 	int ready_threads = list_size(&ready_list);
@@ -109,6 +110,7 @@ thread_calc_load_avg() {
 	);
 }
 
+/* Calculates next value for a thread's recent_cpu and returns it. */
 static floater
 thread_calc_recent_cpu (struct thread* t) {
 	ASSERT(thread_mlfqs);
@@ -130,13 +132,14 @@ thread_calc_priority (struct thread* t) {
 	ASSERT(thread_mlfqs);
 	
 	int priority = floater_to_int_trunc(
-			floater_sub_floater(
-				floater_from_int(PRI_MAX),
-				floater_sub_int(
-					floater_div_int(t->mlfqs.recent_cpu, 4),
-					t->mlfqs.nice * 2
-				)
-			));
+		floater_sub_floater(
+			floater_from_int(PRI_MAX),
+			floater_add_int(
+				floater_div_int(t->mlfqs.recent_cpu, 4),
+				t->mlfqs.nice * 2
+			)
+		)
+	);
 
 	if (priority < PRI_MIN) return PRI_MIN;
 	if (priority > PRI_MAX) return PRI_MAX;
@@ -188,6 +191,7 @@ thread_init (void) {
 		initial_thread->mlfqs.nice = 0;
 		initial_thread->mlfqs.recent_cpu = 0;
 		initial_thread->priority = thread_calc_priority(initial_thread);
+		list_push_back (&thread_list, &initial_thread->mlfqs.elem);
 	}
 
 	initial_thread->status = THREAD_RUNNING;
@@ -229,6 +233,8 @@ thread_tick (void) {
 	if (thread_mlfqs) {
 		int64_t ticks = timer_ticks ();
 		if (ticks % TIMER_FREQ == 0) {
+			load_avg = thread_calc_load_avg();
+
 			for (
 				struct list_elem *it = list_begin(&thread_list);
 				it != list_end(&thread_list);
@@ -237,10 +243,8 @@ thread_tick (void) {
 				struct thread *ithread = list_entry (it, struct thread, mlfqs.elem);
 				ithread->mlfqs.recent_cpu = thread_calc_recent_cpu (ithread);
 			}
-
-			load_avg = thread_calc_load_avg();
 		}
-		
+
 		if (ticks % 4 == 0) {
 			for (
 				struct list_elem *it = list_begin(&thread_list);
@@ -251,9 +255,9 @@ thread_tick (void) {
 				ithread->priority = thread_calc_priority (ithread);
 			}
 		}
-		
+
 		if (t != idle_thread)
-			++t->mlfqs.recent_cpu;
+			t->mlfqs.recent_cpu = floater_add_int(t->mlfqs.recent_cpu, 1);
 	}
 
 
@@ -310,6 +314,7 @@ thread_create (const char *name, int priority,
 		t->mlfqs.nice = thread_get_nice ();
 		t->mlfqs.recent_cpu = thread_get_recent_cpu ();
 		t->priority = thread_calc_priority(t);
+		list_push_back (&thread_list, &t->mlfqs.elem);
 	}
 
 	tid = t->tid = allocate_tid ();
@@ -324,11 +329,6 @@ thread_create (const char *name, int priority,
 	t->tf.ss = SEL_KDSEG;
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
-
-	if (thread_mlfqs) {
-		/* Add to global thread list */
-		list_push_back (&thread_list, &t->mlfqs.elem);
-	}
 
 	/* Add to run queue. */
 	thread_unblock (t);
@@ -697,8 +697,6 @@ thread_launch (struct thread *th) {
 			"out_iret:\n"
 			: : "g"(tf_cur), "g" (tf) : "memory"
 			);
-	
-	// printf("got in %s (%d)\n", thread_current()->name, thread_current()->priority);
 }
 
 /* Schedules a new process. At entry, interrupts must be off.

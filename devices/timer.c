@@ -20,7 +20,7 @@
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
 
-/* Number of waiting threads. */
+/* List of waiting threads. */
 static struct list thread_list;
 
 /* Number of loops per timer tick.
@@ -31,6 +31,21 @@ static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
+
+/* List element for a thread that is sleeping. Keeps track of when it should wake up. */
+struct sleeping_thread {
+	struct thread *thread;    /* Thread sleeping. */
+	struct list_elem elem;    /* List element. */
+	int64_t end;              /* When it should wake up. */
+};
+
+/* Finds thread waking up the soonest. */
+static bool
+sleeping_thread_less(const struct list_elem *a,
+		const struct list_elem *b, void *aux UNUSED) {
+	return list_entry (a, struct sleeping_thread, elem)->end
+		< list_entry (b, struct sleeping_thread, elem)->end;
+}
 
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
    interrupt PIT_FREQ times per second, and registers the
@@ -96,14 +111,17 @@ void
 timer_sleep (int64_t ticks) {
 	int64_t start = timer_ticks ();
 	enum intr_level old_level;
+	struct sleeping_thread sleeping_thread;
 
 	ASSERT (intr_get_level () == INTR_ON);
 
 	old_level = intr_disable ();
-	while (timer_elapsed (start) < ticks) {
-		list_push_back (&thread_list, &thread_current()->elem);
-		thread_block ();
-	}
+
+	sleeping_thread.end = start + ticks;
+	sleeping_thread.thread = thread_current();
+	list_insert_ordered (&thread_list, &sleeping_thread.elem, sleeping_thread_less, NULL);
+	thread_block ();
+
 	intr_set_level (old_level);
 }
 
@@ -140,9 +158,18 @@ timer_interrupt (struct intr_frame *args UNUSED) {
 	thread_tick ();
 
 	old_level = intr_disable ();
-	while (!list_empty(&thread_list))
-		thread_unblock (list_entry (list_pop_front (&thread_list), 
-			struct thread, elem));
+
+	while (!list_empty(&thread_list)) {
+		struct sleeping_thread *t = list_entry (list_pop_front (&thread_list), 
+			struct sleeping_thread, elem);
+		
+		if (ticks < t->end) {
+			list_push_front(&thread_list, &t->elem);
+			break;
+		}
+
+		thread_unblock (t->thread);
+	}
 	intr_set_level (old_level);
 }
 
