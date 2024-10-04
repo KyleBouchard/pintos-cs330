@@ -247,7 +247,7 @@ lock_try_acquire (struct lock *lock) {
 void
 lock_release (struct lock *lock) {
 	enum intr_level old_level;
-	int parents = 0, next_donation = PRI_MIN;
+	int next_donation = PRI_MIN;
 
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
@@ -263,6 +263,9 @@ lock_release (struct lock *lock) {
 	) {
 		struct lock *cur_lock = list_entry(l, struct lock, elem);
 		
+		if (cur_lock == lock)
+			continue;
+
 		for (
 			struct list_elem *w = list_begin(&cur_lock->semaphore.waiters);
 			w != list_end(&cur_lock->semaphore.waiters);
@@ -272,10 +275,8 @@ lock_release (struct lock *lock) {
 			int waiter_priority = thread_get_effective_priority (waiter);
 
 			if (thread_current ()->donation == waiter_priority) {
-				if (cur_lock != lock || ++parents == 2) {
-					next_donation = waiter_priority;
-					break;
-				}
+				next_donation = waiter_priority;
+				break;
 			} else if (next_donation < waiter_priority) {
 				next_donation = waiter_priority;
 			}

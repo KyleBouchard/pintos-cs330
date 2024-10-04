@@ -165,7 +165,7 @@ bool
 thread_less_priority (const struct list_elem *a,
 		const struct list_elem *b, void *aux UNUSED) {
 	return thread_get_effective_priority (list_entry (a, struct thread, elem))
-		<= thread_get_effective_priority (list_entry (b, struct thread, elem));
+		< thread_get_effective_priority (list_entry (b, struct thread, elem));
 }
 
 /* Creates a new kernel thread named NAME with the given initial
