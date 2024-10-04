@@ -91,13 +91,13 @@ struct thread {
 	tid_t tid;                          /* Thread identifier. */
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
-	int priority;                       /* Priority. */
-	int base_priority;					/* Base priority. */
+	int priority;                       /* Base priority. */
+	int donation;                       /* Priority donation received. */
+	struct list locks;                  /* Locks currently owned. */
+	struct lock *blocked_on;            /* Lock currently blocked on. */
 
 	/* Shared between thread.c and synch.c. */
-	struct list_elem elem;              /* List element. */
-	struct list locks_list;				/* List of locks hold. */
-	struct thread* receiver; 			/* Thread receiving priority of this thread. */
+	struct list_elem elem;              /* List element. */ */
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -141,7 +141,11 @@ void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 
 int thread_get_priority (void);
+int thread_get_effective_priority (struct thread *thread);
 void thread_set_priority (int);
+bool
+thread_less_priority (const struct list_elem *a,
+		const struct list_elem *b, void *aux UNUSED);
 
 int thread_get_nice (void);
 void thread_set_nice (int);

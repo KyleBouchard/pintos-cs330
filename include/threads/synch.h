@@ -23,8 +23,7 @@ bool sema_compare(const struct list_elem *a,
 struct lock {
 	struct thread *holder;      /* Thread holding lock (for debugging). */
 	struct semaphore semaphore; /* Binary semaphore controlling access. */
-	struct list_elem elem; 		/* List of elements. */
-	int priority; 				/* Priority donation. */
+	struct list_elem elem;      /* For lock to be in list of locks held by thread. */
 };
 
 void lock_init (struct lock *);
