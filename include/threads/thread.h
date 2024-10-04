@@ -24,6 +24,7 @@ typedef int tid_t;
 #define TID_ERROR ((tid_t) -1)          /* Error value for tid_t. */
 
 /* Thread priorities. */
+#define PRI_NULL -1						/* Null priority. */
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
@@ -95,9 +96,8 @@ struct thread {
 	struct list locks;                  /* Locks currently owned. */
 	struct lock *blocked_on;            /* Lock currently blocked on. */
 
-
 	/* Shared between thread.c and synch.c. */
-	struct list_elem elem;              /* List element. */
+	struct list_elem elem;              /* List element. */ */
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -123,6 +123,9 @@ void thread_start (void);
 
 void thread_tick (void);
 void thread_print_stats (void);
+bool thread_compare(const struct list_elem *a,
+				 	const struct list_elem *b,
+                 	void *aux);
 
 typedef void thread_func (void *aux);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);

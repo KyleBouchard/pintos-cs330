@@ -105,7 +105,7 @@ thread_init (void) {
 	};
 	lgdt (&gdt_ds);
 
-	/* Init the globla thread context */
+	/* Init the global thread context */
 	lock_init (&tid_lock);
 	list_init (&ready_list);
 	list_init (&destruction_req);
@@ -213,6 +213,8 @@ thread_create (const char *name, int priority,
 
 	/* Add to run queue. */
 	thread_unblock (t);
+	if (t->priority > thread_current()->priority)
+		thread_yield();
 
 	if (thread_get_priority() < thread_get_effective_priority (t))
 		thread_yield();
@@ -313,12 +315,13 @@ thread_yield (void) {
 
 	old_level = intr_disable ();
 	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+		list_push_front(&ready_list, &curr->elem);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
 
-/* Sets the current thread's priority to NEW_PRIORITY. */
+/* Sets the current thread's priority to NEW_PRIORITY. 
+   Yields if the priority is not the highest anymore. */
 void
 thread_set_priority (int new_priority) {
 	thread_current ()->priority = new_priority;
@@ -437,6 +440,8 @@ init_thread (struct thread *t, const char *name, int priority) {
 	list_init(&t->locks);
 
 	t->magic = THREAD_MAGIC;
+	t->receiver = NULL;
+	list_init(&(t->locks_list));
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
