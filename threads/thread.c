@@ -368,7 +368,7 @@ thread_unblock (struct thread *t) {
 	ASSERT (is_thread (t));
 
 	old_level = intr_disable ();
-	ASSERT (t->status == THREAD_BLOCKED);	
+	ASSERT (t->status == THREAD_BLOCKED);
 	list_push_back (&ready_list, &t->elem);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
@@ -419,7 +419,7 @@ thread_exit (void) {
 	intr_disable ();
 	
 	if (thread_mlfqs) {
-		/* Add to global thread list */
+		/* Remove from global thread list */
 		list_remove (&thread_current ()->mlfqs.elem);
 	}
 

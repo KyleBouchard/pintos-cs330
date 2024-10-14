@@ -267,10 +267,7 @@ lock_release_donation (struct lock *lock) {
 			struct thread *waiter = list_entry(w, struct thread, elem);
 			int waiter_priority = thread_get_effective_priority (waiter);
 
-			if (thread_current ()->donation.donation == waiter_priority) {
-				next_donation = waiter_priority;
-				break;
-			} else if (next_donation < waiter_priority) {
+			if (next_donation < waiter_priority) {
 				next_donation = waiter_priority;
 			}
 		}
@@ -296,9 +293,7 @@ lock_release (struct lock *lock) {
 
 	old_level = intr_disable ();
 
-	if (thread_mlfqs) {
-		// TODO
-	} else {
+	if (!thread_mlfqs) {
 		lock_release_donation(lock);
 	}
 
