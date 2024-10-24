@@ -45,41 +45,55 @@ syscall_handler (struct intr_frame *f) {
 
 	const uint64_t syscall_number = f->R.rax;
 	const uint64_t args[] = { f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r9, f->R.r8 };
-	const uint64_t status = -1;
+	uint64_t status = 0;
 
 	printf("syscall %d\n", syscall_number);
 
 	switch (syscall_number) {
 	case SYS_HALT:
+		halt();
 		break;
 	case SYS_EXIT:
+		exit(args[0]);
 		break;
 	case SYS_FORK:
+		status = fork(args[0]);
 		break;
 	case SYS_EXEC:
+		status = exec(args[0]);
 		break;
 	case SYS_WAIT:
+		status = wait(args[0]);
 		break;
 	case SYS_CREATE:
+		status = create(args[0], args[1]);
 		break;
 	case SYS_REMOVE:
+		status = remove(args[0]);
 		break;
 	case SYS_OPEN:
+		status = open(args[0]);
 		break;
 	case SYS_FILESIZE:
+		status = filesize(args[0]);
 		break;
 	case SYS_READ:
+		status = read(args[0], args[1], args[2]);
 		break;
 	case SYS_WRITE:
-
+		status = write(args[0], args[1], args[2]);
 		break;
 	case SYS_SEEK:
+		seek(args[0], args[1]);
 		break;
 	case SYS_TELL:
+		status = tell(args[0]);
 		break;
 	case SYS_CLOSE:
+		close(args[0]);
 		break;
 	default:
+		status = -1;
 		break;
 	}
 
