@@ -44,3 +44,73 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	printf ("system call!\n");
 	thread_exit ();
 }
+
+void
+halt (void) {
+
+}
+
+void 
+exit (int status) {
+
+}
+
+pid_t
+fork (const char *thread_name) {
+	return 0;
+}
+
+int 
+exec (const char *cmd_line) {
+	return 0;
+}
+
+int
+wait (pid_t pid) {
+	return 0;
+}
+
+bool 
+create (cost char *file, unsigned initial_size) {
+	return false;
+}
+
+bool 
+remove (cost char *file) {
+	return true;
+}
+
+int 
+open (cost char *file) {
+
+}
+
+int 
+filesize (int fd) {
+
+}
+
+int 
+read (int fd, void *buffer, unsigned size) {
+
+}
+
+int
+write (int fd, const void *buffer, unsigned size) {
+
+}
+
+void
+seek (int fd, unsigned position) {
+
+}
+
+unsigned
+tell (int fd) {
+
+}
+
+void
+close (int fd) {
+
+}

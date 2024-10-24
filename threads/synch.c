@@ -120,7 +120,7 @@ sema_up (struct semaphore *sema) {
 	sema->value++;
 	intr_set_level (old_level);
 
-	if (should_yield)
+	if (old_level != INTR_OFF && should_yield)
 		thread_yield();
 }
 
@@ -300,8 +300,6 @@ lock_release (struct lock *lock) {
 	intr_set_level (old_level);
 
 	sema_up (&lock->semaphore);
-
-	thread_yield ();
 }
 
 /* Returns true if the current thread holds LOCK, false
