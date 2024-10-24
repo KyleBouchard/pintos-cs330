@@ -6,6 +6,7 @@
 #include "threads/loader.h"
 #include "userprog/gdt.h"
 #include "threads/flags.h"
+#include "threads/init.h"
 #include "intrinsic.h"
 
 void syscall_entry (void);
@@ -39,10 +40,51 @@ syscall_init (void) {
 
 /* The main system call interface */
 void
-syscall_handler (struct intr_frame *f UNUSED) {
+syscall_handler (struct intr_frame *f) {
 	// TODO: Your implementation goes here.
-	printf ("system call!\n");
-	thread_exit ();
+
+	const uint64_t syscall_number = f->R.rax;
+	const uint64_t args[] = { f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r9, f->R.r8 };
+	const uint64_t status = -1;
+
+	printf("syscall %d\n", syscall_number);
+
+	switch (syscall_number)
+	{
+	case SYS_HALT:
+		break;
+	case SYS_EXIT:
+		break;
+	case SYS_FORK:
+		break;
+	case SYS_EXEC:
+		break;
+	case SYS_WAIT:
+		break;
+	case SYS_CREATE:
+		break;
+	case SYS_REMOVE:
+		break;
+	case SYS_OPEN:
+		break;
+	case SYS_FILESIZE:
+		break;
+	case SYS_READ:
+		break;
+	case SYS_WRITE:
+
+		break;
+	case SYS_SEEK:
+		break;
+	case SYS_TELL:
+		break;
+	case SYS_CLOSE:
+		break;
+	default:
+		break;
+	}
+
+	f->R.rax = status;
 }
 
 void
@@ -112,5 +154,5 @@ tell (int fd) {
 
 void
 close (int fd) {
-
+ Stashed changes
 }
