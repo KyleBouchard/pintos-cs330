@@ -49,8 +49,7 @@ syscall_handler (struct intr_frame *f) {
 
 	printf("syscall %d\n", syscall_number);
 
-	switch (syscall_number)
-	{
+	switch (syscall_number) {
 	case SYS_HALT:
 		break;
 	case SYS_EXIT:
@@ -113,17 +112,17 @@ wait (pid_t pid) {
 }
 
 bool 
-create (cost char *file, unsigned initial_size) {
+create (const char *file, unsigned initial_size) {
 	return false;
 }
 
 bool 
-remove (cost char *file) {
+remove (const char *file) {
 	return true;
 }
 
 int 
-open (cost char *file) {
+open (const char *file) {
 
 }
 
@@ -154,5 +153,4 @@ tell (int fd) {
 
 void
 close (int fd) {
- Stashed changes
 }
