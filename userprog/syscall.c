@@ -30,6 +30,9 @@ void seek(int fd, unsigned position);
 unsigned tell(int fd);
 void close(int fd);
 
+bool validate_buffer(const void* ptr, size_t size);
+bool validate_string(const char* str);
+
 /* System call.
  *
  * Previously system call services was handled by the interrupt handler
@@ -123,7 +126,7 @@ halt (void) {
 	power_off();
 }
 
-void 
+void
 exit (int status) {
 	thread_exit();
 }
@@ -133,7 +136,7 @@ fork (const char *thread_name) {
 	return 0;
 }
 
-int 
+int
 exec (const char *cmd_line) {
 	return 0;
 }
@@ -143,27 +146,27 @@ wait (pid_t pid) {
 	return 0;
 }
 
-bool 
+bool
 create (const char *file, unsigned initial_size) {
 	return false;
 }
 
-bool 
+bool
 remove (const char *file) {
 	return true;
 }
 
-int 
+int
 open (const char *file) {
 
 }
 
-int 
+int
 filesize (int fd) {
 
 }
 
-int 
+int
 read (int fd, void *buffer, unsigned size) {
 
 }
@@ -186,4 +189,25 @@ tell (int fd) {
 void
 close (int fd) {
 	
+}
+
+bool
+validate_buffer(const void* ptr, size_t size) {
+	if (!is_user_vaddr(ptr))
+		return false;
+
+	if (!is_user_vaddr((uint8_t *) ptr + size))
+		return false;
+
+	return true;
+}
+
+bool
+validate_string(const char* str) {
+	for (char* i = str; is_user_vaddr(i); i++) {
+		if (*i == '\0')
+			return true;
+	}
+
+	return false;
 }
