@@ -120,12 +120,12 @@ syscall_handler (struct intr_frame *f) {
 
 void
 halt (void) {
-
+	power_off();
 }
 
 void 
 exit (int status) {
-	
+	thread_exit();
 }
 
 pid_t
@@ -185,4 +185,5 @@ tell (int fd) {
 
 void
 close (int fd) {
+	
 }
