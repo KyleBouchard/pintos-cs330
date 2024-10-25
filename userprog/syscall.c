@@ -8,12 +8,16 @@
 #include "userprog/process.h"
 #include "threads/flags.h"
 #include "threads/init.h"
+#include "filesys/filesys.h"
 #include "intrinsic.h"
 
 typedef int pid_t;
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
+
+bool validate_string (const char *);
+bool validate_buffer (const void *, size_t);
 
 void halt(void);
 void exit(int status);
@@ -133,11 +137,17 @@ exit (int status) {
 
 pid_t
 fork (const char *thread_name) {
+	if (!validate_string(thread_name))
+		return -1;
+
 	return 0;
 }
 
 int
 exec (const char *cmd_line) {
+	if (!validate_string(cmd_line))
+		return -1;
+
 	return 0;
 }
 
@@ -148,17 +158,24 @@ wait (pid_t pid) {
 
 bool
 create (const char *file, unsigned initial_size) {
-	return false;
+	if (!validate_string(file))
+		return false;
+
+	return filesys_create(file, initial_size);
 }
 
 bool
 remove (const char *file) {
-	return true;
+	if (!validate_string(file))
+		return false;
+
+	return filesys_remove(file);
 }
 
 int
 open (const char *file) {
-
+	if (!validate_string(file))
+		return -1;
 }
 
 int
@@ -168,12 +185,14 @@ filesize (int fd) {
 
 int
 read (int fd, void *buffer, unsigned size) {
-
+	if (!validate_buffer(buffer, size))
+		return -1;
 }
 
 int
 write (int fd, const void *buffer, unsigned size) {
-
+	if (!validate_buffer(buffer, size))
+		return -1;
 }
 
 void
@@ -188,18 +207,6 @@ tell (int fd) {
 
 void
 close (int fd) {
-	
-}
-
-bool
-validate_buffer(const void* ptr, size_t size) {
-	if (!is_user_vaddr(ptr))
-		return false;
-
-	if (!is_user_vaddr((uint8_t *) ptr + size))
-		return false;
-
-	return true;
 }
 
 bool
@@ -210,4 +217,8 @@ validate_string(const char* str) {
 	}
 
 	return false;
+}
+
+bool validate_buffer (const void *buf, size_t size) {
+	return is_user_vaddr(buf) && is_user_vaddr((void *)((uintptr_t)buf + size));
 }
