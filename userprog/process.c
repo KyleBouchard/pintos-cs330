@@ -14,6 +14,7 @@
 #include "threads/init.h"
 #include "threads/interrupt.h"
 #include "threads/palloc.h"
+#include "threads/malloc.h"
 #include "threads/thread.h"
 #include "threads/mmu.h"
 #include "threads/vaddr.h"
@@ -23,7 +24,7 @@
 #endif
 
 static void process_cleanup (void);
-static bool load (const char *file_name, struct intr_frame *if_);
+static bool load (const char *file_name, struct intr_frame *if_, char** argv, int argc);
 static void initd (void *f_name);
 static void __do_fork (void *);
 
@@ -92,21 +93,29 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	bool writable;
 
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
+	if (is_kern_pte(pte))
+		return false;
 
 	/* 2. Resolve VA from the parent's page map level 4. */
 	parent_page = pml4_get_page (parent->pml4, va);
 
 	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
 	 *    TODO: NEWPAGE. */
+	if (!(newpage = palloc_get_page(PAL_USER)))
+		return false;
 
 	/* 4. TODO: Duplicate parent's page to the new page and
 	 *    TODO: check whether parent's page is writable or not (set WRITABLE
 	 *    TODO: according to the result). */
+	memcpy(newpage, parent_page, PGSIZE);
+	writable = is_writable(pte);
 
 	/* 5. Add new page to child's page table at address VA with WRITABLE
 	 *    permission. */
 	if (!pml4_set_page (current->pml4, va, newpage, writable)) {
 		/* 6. TODO: if fail to insert page, do error handling. */
+		palloc_free_page(newpage);
+		return false;
 	}
 	return true;
 }
@@ -162,7 +171,19 @@ error:
  * Returns -1 on fail. */
 int
 process_exec (void *f_name) {
-	char *file_name = f_name;
+	char *f_arg, *save_ptr;
+	int argc = 0;
+	char** argv = NULL;
+	for (f_arg = strtok_r (f_name, " ", &save_ptr); 
+		f_arg != NULL;
+   		f_arg = strtok_r (NULL, " ", &save_ptr)) {
+			argc++;
+			argv = realloc(argv, argc * sizeof(char*));
+			argv[argc - 1] = f_arg;
+		}
+	char *file_name = argv[0];
+	strlcpy(thread_current ()->name, argv[0], sizeof(thread_current ()->name));
+	
 	bool success;
 
 	/* We cannot use the intr_frame in the thread structure.
@@ -177,7 +198,7 @@ process_exec (void *f_name) {
 	process_cleanup ();
 
 	/* And then load the binary */
-	success = load (file_name, &_if);
+	success = load (file_name, &_if, argv, argc);
 
 	/* If load failed, quit. */
 	palloc_free_page (file_name);
@@ -204,7 +225,28 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-	return -1;
+	struct thread* current = thread_current ();
+	struct list_elem* child_elem;
+	struct thread_exit_status* child_exit_status = NULL;
+	for (struct list_elem* elem = list_begin (&current->children);
+				elem != list_end (&current->children); elem = list_next(elem)) {
+		struct thread_exit_status* entry = list_entry(elem, struct thread_exit_status, elem);
+		if (entry->pid == child_tid) {
+			child_exit_status = entry;
+			child_elem = elem;
+			break;
+		}
+	}
+
+	if (child_exit_status == NULL)
+		return -1;
+
+	int exit_status = thread_exit_status_wait(child_exit_status);
+
+	list_remove(child_elem);
+	thread_exit_status_disown(child_exit_status);
+
+	return child_exit_status;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
@@ -215,7 +257,10 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
-
+	if (curr->exit_status != NULL) {
+		sema_up(&curr->exit_status->event);
+		thread_exit_status_disown(curr->exit_status);
+	}
 	process_cleanup ();
 }
 
@@ -321,13 +366,14 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
  * and its initial stack pointer into *RSP.
  * Returns true if successful, false otherwise. */
 static bool
-load (const char *file_name, struct intr_frame *if_) {
+load (const char *file_name, struct intr_frame *if_, char** argv, int argc) {
 	struct thread *t = thread_current ();
 	struct ELF ehdr;
 	struct file *file = NULL;
 	off_t file_ofs;
 	bool success = false;
 	int i;
+	char** ptr_argv[argc + 1];
 
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create ();
@@ -416,6 +462,27 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+
+	for (size_t i = 0; i < argc; i++) {
+		if_->rsp -= strlen(argv[i]) + 1;
+		strlcpy(((char**) if_->rsp), argv[i], strlen(argv[i]) + 1);
+		ptr_argv[i] = if_->rsp;
+	}
+	ptr_argv[argc] = 0;
+
+	if_->rsp -= if_->rsp % 8;
+	*((uint8_t*) if_->rsp) = NULL;
+	
+	for (int i = argc; i >= 0; i--) {
+		if_->rsp -= sizeof(char*);
+		*((char **) if_->rsp) = ptr_argv[i];
+	}
+
+	if_->R.rsi = if_->rsp;
+	if_->R.rdi = argc;
+
+	if_->rsp -= sizeof(void*);
+	*((void **) if_->rsp) = NULL;
 
 	success = true;
 

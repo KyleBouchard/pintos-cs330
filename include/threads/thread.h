@@ -9,6 +9,7 @@
 #include "vm/vm.h"
 #endif
 #include "fixed-point.h"
+#include "synch.h"
 
 
 /* States in a thread's life cycle. */
@@ -29,6 +30,22 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+#ifdef USERPROG
+struct thread_exit_status {
+	tid_t pid;							/* Child process stored. */
+	int exit_status;					/* Child process exit status. */
+	struct semaphore event; /* Update when died. */
+	size_t reference_count;				/* Reference count to the number of thread that have a pointer on it. */
+	struct lock reference_count_lock;	/* Lock for reference count int. */
+	struct list_elem elem;				/* List elem. */
+};
+
+bool thread_exit_status_new(struct thread *thread);
+int thread_exit_status_wait(struct thread_exit_status *exit_status);
+void thread_exit_status_own(struct thread_exit_status *exit_status);
+void thread_exit_status_disown(struct thread_exit_status *exit_status);
+#endif
 
 /* A kernel thread or user process.
  *
@@ -102,7 +119,7 @@ struct thread {
 		struct {
 			int nice;                   /* Nice value. */
 			floater recent_cpu;
-			struct list_elem elem;      /*  */
+			struct list_elem elem;      
 		} mlfqs;
 	};
 
@@ -111,7 +128,9 @@ struct thread {
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
+	struct list children; 				/* Children of the process. */
 	uint64_t *pml4;                     /* Page map level 4 */
+	struct thread_exit_status* exit_status;		/* Status referenced by parent. */
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */

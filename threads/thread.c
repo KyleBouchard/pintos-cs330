@@ -8,6 +8,7 @@
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
 #include "threads/palloc.h"
+#include "threads/malloc.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #include "devices/timer.h"
@@ -319,6 +320,14 @@ thread_create (const char *name, int priority,
 
 	tid = t->tid = allocate_tid ();
 
+#ifdef USERPROG
+    if (!thread_exit_status_new(t))
+        PANIC("Failed to allocate exit status block");
+
+    thread_exit_status_own (t->exit_status);
+    list_push_back (&thread_current ()->children, &t->exit_status->elem);
+#endif
+
 	/* Call the kernel_thread if it scheduled.
 	 * Note) rdi is 1st argument, and rsi is 2nd argument. */
 	t->tf.rip = (uintptr_t) kernel_thread;
@@ -583,6 +592,11 @@ init_thread (struct thread *t, const char *name, int priority) {
 		list_init(&t->donation.locks);
 	}
 
+#ifdef USERPROG
+    list_init(&t->children);
+    t->exit_status = NULL;
+#endif
+
 	t->magic = THREAD_MAGIC;
 }
 
@@ -766,3 +780,52 @@ allocate_tid (void) {
 
 	return tid;
 }
+
+#ifdef USERPROG
+/* Create a thread_exit_status structure. */
+bool
+thread_exit_status_new(struct thread *thread) {
+	struct thread_exit_status *exit_status = malloc(sizeof(struct thread_exit_status));
+	if (!exit_status)
+		return false;
+	
+	exit_status->pid = thread->tid;
+	exit_status->exit_status = -1;
+	exit_status->reference_count = 1;
+	lock_init(&exit_status->reference_count_lock);
+	sema_init(&exit_status->event, 0);
+
+	thread->exit_status = exit_status;
+	return true;
+}
+
+/* Increment reference count of the thread_exit_status. */
+void
+thread_exit_status_own(struct thread_exit_status *exit_status) {
+	lock_acquire(&exit_status->reference_count_lock);
+	exit_status->reference_count++;
+	lock_release(&exit_status->reference_count_lock);
+}
+
+/* Wait until exit status is actually exit. */
+int
+thread_exit_status_wait(struct thread_exit_status *exit_status) {
+	sema_down(&exit_status->event);
+	sema_up(&exit_status->event);
+	return exit_status->exit_status;
+}
+
+/* Decrement reference count of the thread_exit_status. */
+void
+thread_exit_status_disown(struct thread_exit_status *exit_status) {
+	bool should_free = false;
+	lock_acquire(&exit_status->reference_count_lock);
+	exit_status->reference_count--;
+	if (exit_status->reference_count == 0)
+		should_free = true;
+	lock_release(&exit_status->reference_count_lock);
+
+	if (should_free)
+		free(exit_status);
+}
+#endif

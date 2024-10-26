@@ -72,7 +72,7 @@ syscall_handler (struct intr_frame *f) {
 	const uint64_t args[] = { f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r9, f->R.r8 };
 	uint64_t status = 0;
 
-	printf("syscall %d\n", syscall_number);
+	// printf("syscall %d\n", syscall_number);
 
 	switch (syscall_number) {
 	case SYS_HALT:
@@ -132,6 +132,10 @@ halt (void) {
 
 void
 exit (int status) {
+	printf ("%s: exit(%d)\n", thread_current ()->name, status);
+	struct thread_exit_status* exit_status = thread_current ()->exit_status;
+	if (exit_status != NULL)
+		exit_status->exit_status = status;
 	thread_exit();
 }
 
@@ -153,7 +157,7 @@ exec (const char *cmd_line) {
 
 int
 wait (pid_t pid) {
-	return 0;
+	return process_wait(pid);
 }
 
 bool
@@ -193,6 +197,11 @@ int
 write (int fd, const void *buffer, unsigned size) {
 	if (!validate_buffer(buffer, size))
 		return -1;
+
+	if (fd != 1)
+		return -1;
+		
+	putbuf(buffer, size);
 }
 
 void
