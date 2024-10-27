@@ -134,12 +134,16 @@ page_fault (struct intr_frame *f) {
 	   be assured of reading CR2 before it changed). */
 	intr_enable ();
 
-	// TODO
-
 	/* Determine cause. */
 	not_present = (f->error_code & PF_P) == 0;
 	write = (f->error_code & PF_W) != 0;
 	user = (f->error_code & PF_U) != 0;
+
+	if (!user && is_user_vaddr(fault_addr)) {
+		f->rip = f->R.rax;
+		f->R.rax = -1;
+		return;
+	}
 
 #ifdef VM
 	/* For project 3 and later. */

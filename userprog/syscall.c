@@ -14,12 +14,9 @@
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
-bool validate_string (const char *);
-bool validate_buffer (const void *, size_t);
-
 void halt(void);
 void exit(int status);
-tid_t fork(const char *thread_name);
+tid_t fork(const char *thread_name, struct intr_frame *f);
 int exec(const char *cmd_line);
 int wait(tid_t pid);
 bool create(const char *file, unsigned initial_size);
@@ -32,8 +29,8 @@ void seek(int fd, unsigned position);
 unsigned tell(int fd);
 void close(int fd);
 
-bool validate_buffer(const void* ptr, size_t size);
-bool validate_string(const char* str);
+void validate_buffer(const void* ptr, size_t size);
+void validate_string(const char* str);
 
 /* System call.
  *
@@ -80,7 +77,7 @@ syscall_handler (struct intr_frame *f) {
 		exit(args[0]);
 		break;
 	case SYS_FORK:
-		status = fork(args[0]);
+		status = fork(args[0], f);
 		break;
 	case SYS_EXEC:
 		status = exec(args[0]);
@@ -123,6 +120,35 @@ syscall_handler (struct intr_frame *f) {
 	f->R.rax = status;
 }
 
+/* Reads a byte at user virtual address UADDR.
+ * UADDR must be below KERN_BASE.
+ * Returns the byte value if successful, -1 if a segfault
+ * occurred. */
+static int64_t
+get_user (const uint8_t *uaddr) {
+    int64_t result;
+    __asm __volatile (
+    "movabsq $done_get, %0\n"
+    "movzbq %1, %0\n"
+    "done_get:\n"
+    : "=&a" (result) : "m" (*uaddr));
+    return result;
+}
+
+/* Writes BYTE to user address UDST.
+ * UDST must be below KERN_BASE.
+ * Returns true if successful, false if a segfault occurred. */
+static bool
+put_user (uint8_t *udst, uint8_t byte) {
+    int64_t error_code;
+    __asm __volatile (
+    "movabsq $done_put, %0\n"
+    "movb %b2, %1\n"
+    "done_put:\n"
+    : "=&a" (error_code), "=m" (*udst) : "q" (byte));
+    return error_code != -1;
+}
+
 void
 halt (void) {
 	power_off();
@@ -140,19 +166,17 @@ exit (int status) {
 }
 
 tid_t
-fork (const char *thread_name) {
-	if (!validate_string(thread_name))
-		return -1;
+fork (const char *thread_name, struct intr_frame *f) {
+	validate_string(thread_name);
 
-	return 0;
+	return process_fork (thread_name, f);
 }
 
 int
 exec (const char *cmd_line) {
-	if (!validate_string(cmd_line))
-		return -1;
+	validate_string(cmd_line);
 
-	return 0;
+	return process_exec(cmd_line);
 }
 
 int
@@ -162,24 +186,21 @@ wait (tid_t pid) {
 
 bool
 create (const char *file, unsigned initial_size) {
-	if (!validate_string(file))
-		return false;
+	validate_string(file);
 
 	return filesys_create(file, initial_size);
 }
 
 bool
 remove (const char *file) {
-	if (!validate_string(file))
-		return false;
+	validate_string(file);
 
 	return filesys_remove(file);
 }
 
 int
 open (const char *file) {
-	if (!validate_string(file))
-		return -1;
+	validate_string(file);
 }
 
 int
@@ -189,14 +210,12 @@ filesize (int fd) {
 
 int
 read (int fd, void *buffer, unsigned size) {
-	if (!validate_buffer(buffer, size))
-		return -1;
+	validate_buffer(buffer, size);
 }
 
 int
 write (int fd, const void *buffer, unsigned size) {
-	if (!validate_buffer(buffer, size))
-		return -1;
+	validate_buffer(buffer, size);
 
 	if (fd != 1)
 		return -1;
@@ -220,16 +239,27 @@ void
 close (int fd) {
 }
 
-bool
+void
 validate_string(const char* str) {
 	for (char* i = str; is_user_vaddr(i); i++) {
-		if (*i == '\0')
-			return true;
+		int64_t ubyte = get_user(i);
+
+		if (ubyte < 0)
+			break;
+		else if (ubyte == 0)
+			return;
 	}
 
-	return false;
+	exit(-1);
 }
 
-bool validate_buffer (const void *buf, size_t size) {
-	return is_user_vaddr(buf) && is_user_vaddr((void *)((uintptr_t)buf + size));
+void
+validate_buffer (const void *buf, size_t size) {
+	uint8_t *i;
+
+	for (i = buf; i < (uint8_t *)buf + size && is_user_vaddr(i) && get_user(i) >= 0; i++);
+
+	if (i < (uint8_t *)buf + size) {
+		exit(-1);
+	}
 }
