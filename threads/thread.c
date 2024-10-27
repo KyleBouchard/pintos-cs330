@@ -321,8 +321,14 @@ thread_create (const char *name, int priority,
 	tid = t->tid = allocate_tid ();
 
 #ifdef USERPROG
-    if (!thread_exit_status_new(t))
-        PANIC("Failed to allocate exit status block");
+    if (!thread_exit_status_new(t)) {
+		if (thread_mlfqs)
+			list_remove(&t->mlfqs.elem);
+
+		palloc_free_page(t);
+
+		return TID_ERROR;
+	}
 
     thread_exit_status_own (t->exit_status);
     list_push_back (&thread_current ()->children, &t->exit_status->elem);
@@ -593,8 +599,8 @@ init_thread (struct thread *t, const char *name, int priority) {
 	}
 
 #ifdef USERPROG
-    list_init(&t->children);
-    t->exit_status = NULL;
+	list_init(&t->children);
+	t->exit_status = NULL;
 #endif
 
 	t->magic = THREAD_MAGIC;
@@ -809,23 +815,26 @@ thread_exit_status_own(struct thread_exit_status *exit_status) {
 
 /* Wait until exit status is actually exit. */
 int
-thread_exit_status_wait(struct thread_exit_status *exit_status) {
-	sema_down(&exit_status->event);
-	sema_up(&exit_status->event);
-	return exit_status->exit_status;
+thread_exit_status_wait(struct thread_exit_status *status) {
+	ASSERT (thread_current ()->tid != status->pid);
+
+	sema_down (&status->event);
+	sema_up (&status->event);
+
+	return status->exit_status;
 }
 
 /* Decrement reference count of the thread_exit_status. */
-void
-thread_exit_status_disown(struct thread_exit_status *exit_status) {
-	bool should_free = false;
-	lock_acquire(&exit_status->reference_count_lock);
-	exit_status->reference_count--;
-	if (exit_status->reference_count == 0)
-		should_free = true;
-	lock_release(&exit_status->reference_count_lock);
+void thread_exit_status_disown(struct thread_exit_status *status) {
+	bool shall_free;
+	
+	lock_acquire(&status->reference_count_lock);
+	shall_free = !--status->reference_count;
+	lock_release(&status->reference_count_lock);
 
-	if (should_free)
-		free(exit_status);
+	if (shall_free) {
+		// Assume no one else using it.
+		free(status);
+	}
 }
 #endif

@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -35,7 +36,7 @@ typedef int tid_t;
 struct thread_exit_status {
 	tid_t pid;							/* Child process stored. */
 	int exit_status;					/* Child process exit status. */
-	struct semaphore event; /* Update when died. */
+	struct semaphore event;             /* Update when died. */
 	size_t reference_count;				/* Reference count to the number of thread that have a pointer on it. */
 	struct lock reference_count_lock;	/* Lock for reference count int. */
 	struct list_elem elem;				/* List elem. */
@@ -128,8 +129,8 @@ struct thread {
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
-	struct list children; 				/* Children of the process. */
 	uint64_t *pml4;                     /* Page map level 4 */
+	struct list children; 				/* Children of the process. */
 	struct thread_exit_status* exit_status;		/* Status referenced by parent. */
 #endif
 #ifdef VM

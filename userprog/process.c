@@ -13,6 +13,7 @@
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/interrupt.h"
+#include "threads/malloc.h"
 #include "threads/palloc.h"
 #include "threads/malloc.h"
 #include "threads/thread.h"
@@ -24,8 +25,8 @@
 #endif
 
 static void process_cleanup (void);
-static bool load (const char *file_name, struct intr_frame *if_, char** argv, int argc);
-static void initd (void *f_name);
+static bool load (struct intr_frame *if_, const char *const *argv, const size_t argc);
+static void initd (void *initd_arg);
 static void __do_fork (void *);
 
 /* General process initializer for initd and other process. */
@@ -40,34 +41,34 @@ process_init (void) {
  * thread id, or TID_ERROR if the thread cannot be created.
  * Notice that THIS SHOULD BE CALLED ONCE. */
 tid_t
-process_create_initd (const char *file_name) {
-	char *fn_copy;
+process_create_initd (const char *cmd_line) {
+	char *cmd_line_copy;
 	tid_t tid;
 
 	/* Make a copy of FILE_NAME.
 	 * Otherwise there's a race between the caller and load(). */
-	fn_copy = palloc_get_page (0);
-	if (fn_copy == NULL)
+	cmd_line_copy = palloc_get_page (0);
+	if (cmd_line_copy == NULL)
 		return TID_ERROR;
-	strlcpy (fn_copy, file_name, PGSIZE);
+	strlcpy (cmd_line_copy, cmd_line, PGSIZE);
 
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create (cmd_line, PRI_DEFAULT, initd, cmd_line_copy);
 	if (tid == TID_ERROR)
-		palloc_free_page (fn_copy);
+		palloc_free_page (cmd_line_copy);
 	return tid;
 }
 
 /* A thread function that launches first user process. */
 static void
-initd (void *f_name) {
+initd (void *cmd_line) {
 #ifdef VM
 	supplemental_page_table_init (&thread_current ()->spt);
 #endif
 
 	process_init ();
 
-	if (process_exec (f_name) < 0)
+	if (process_exec (cmd_line) < 0)
 		PANIC("Fail to launch initd\n");
 	NOT_REACHED ();
 }
@@ -88,7 +89,7 @@ static bool
 duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	struct thread *current = thread_current ();
 	struct thread *parent = (struct thread *) aux;
-	void *parent_page;
+	void *parent_page = parent->pml4;
 	void *newpage;
 	bool writable;
 
@@ -170,21 +171,11 @@ error:
 /* Switch the current execution context to the f_name.
  * Returns -1 on fail. */
 int
-process_exec (void *f_name) {
-	char *f_arg, *save_ptr;
-	int argc = 0;
-	char** argv = NULL;
-	for (f_arg = strtok_r (f_name, " ", &save_ptr); 
-		f_arg != NULL;
-   		f_arg = strtok_r (NULL, " ", &save_ptr)) {
-			argc++;
-			argv = realloc(argv, argc * sizeof(char*));
-			argv[argc - 1] = f_arg;
-		}
-	char *file_name = argv[0];
-	strlcpy(thread_current ()->name, argv[0], sizeof(thread_current ()->name));
-	
-	bool success;
+process_exec (void *cmd_line) {
+	char *arg, *save_ptr;
+	const char **argv = NULL, **old_argv = NULL;
+	bool success = false;
+	size_t argc = 0;
 
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
@@ -197,11 +188,33 @@ process_exec (void *f_name) {
 	/* We first kill the current context */
 	process_cleanup ();
 
+	for (
+		arg = strtok_r(cmd_line, " ", &save_ptr);
+		arg;
+		arg = strtok_r(NULL, " ", &save_ptr)
+	) {
+		argv = realloc(old_argv = argv, sizeof(*argv) * ++argc);
+		if (!argv)
+			goto out;
+
+		argv[argc - 1] = arg;
+	}
+
+	if (argc > 0) {
+		strlcpy(thread_current ()->name, argv[0], sizeof (thread_current ()->name));
+	}
+
 	/* And then load the binary */
-	success = load (file_name, &_if, argv, argc);
+	success = load (&_if, argv, argc);
+
+out:
+	if (argv)
+		free(argv);
+	else if (old_argv)
+		free(old_argv);
 
 	/* If load failed, quit. */
-	palloc_free_page (file_name);
+	palloc_free_page (cmd_line);
 	if (!success)
 		return -1;
 
@@ -221,32 +234,35 @@ process_exec (void *f_name) {
  * This function will be implemented in problem 2-2.  For now, it
  * does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) {
+process_wait (tid_t child_tid) {
+	struct thread *curr = thread_current ();
+	struct thread_exit_status *child = NULL;
+
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-	struct thread* current = thread_current ();
-	struct list_elem* child_elem;
-	struct thread_exit_status* child_exit_status = NULL;
-	for (struct list_elem* elem = list_begin (&current->children);
-				elem != list_end (&current->children); elem = list_next(elem)) {
-		struct thread_exit_status* entry = list_entry(elem, struct thread_exit_status, elem);
-		if (entry->pid == child_tid) {
-			child_exit_status = entry;
-			child_elem = elem;
+	for (
+		struct list_elem *e = list_begin (&curr->children);
+		e != list_end (&curr->children);
+		e = list_next (e)
+	) {
+		struct thread_exit_status *c = list_entry (e, struct thread_exit_status, elem);
+
+		if (c->pid == child_tid) {
+			child = c;
+			list_remove(e);
 			break;
 		}
 	}
 
-	if (child_exit_status == NULL)
+	if (!child)
 		return -1;
 
-	int exit_status = thread_exit_status_wait(child_exit_status);
+	int status = thread_exit_status_wait(child);
 
-	list_remove(child_elem);
-	thread_exit_status_disown(child_exit_status);
+	thread_exit_status_disown (child);
 
-	return child_exit_status;
+	return status;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
@@ -261,6 +277,7 @@ process_exit (void) {
 		sema_up(&curr->exit_status->event);
 		thread_exit_status_disown(curr->exit_status);
 	}
+
 	process_cleanup ();
 }
 
@@ -361,19 +378,66 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		uint32_t read_bytes, uint32_t zero_bytes,
 		bool writable);
 
+static bool
+load_args (struct intr_frame *if_, const char *const *argv, const size_t argc) {
+	char **new_argv;
+
+	new_argv = malloc(argc * sizeof(*new_argv));
+	if (!new_argv)
+		return false;
+
+	// Push all argument data
+	for (size_t i = 0; i < argc; ++i) {
+		size_t len = strlen(argv[i]) + 1;
+
+		if_->rsp -= len;
+		new_argv[i] = (char *)if_->rsp;
+
+		memcpy(new_argv[i], argv[i], len);
+	}
+
+	// Align stack on 8 byte boundary
+	if_->rsp -= if_->rsp % 8;
+
+	// Null pointer
+	if_->rsp -= sizeof(char *);
+	*(char **)if_->rsp = NULL;
+
+	// Push all argument pointers
+	for (size_t i = 0; i < argc; ++i) {
+		if_->rsp -= sizeof(char *);
+		*(char **)if_->rsp = new_argv[argc - 1 - i];
+	}
+
+	free(new_argv);
+
+	// Setup user mode arguments
+	if_->R.rdi = argc;
+	if_->R.rsi = if_->rsp;
+
+	// Fake return address
+	if_->rsp -= sizeof(char *);
+	*(char **)if_->rsp = NULL;
+
+	return true;
+}
+
 /* Loads an ELF executable from FILE_NAME into the current thread.
  * Stores the executable's entry point into *RIP
  * and its initial stack pointer into *RSP.
  * Returns true if successful, false otherwise. */
 static bool
-load (const char *file_name, struct intr_frame *if_, char** argv, int argc) {
+load (struct intr_frame *if_, const char *const *argv, const size_t argc) {
 	struct thread *t = thread_current ();
 	struct ELF ehdr;
 	struct file *file = NULL;
 	off_t file_ofs;
 	bool success = false;
 	int i;
-	char** ptr_argv[argc + 1];
+
+	/* Check that we have a file name */
+	if (argc < 1)
+		goto done;
 
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create ();
@@ -382,9 +446,9 @@ load (const char *file_name, struct intr_frame *if_, char** argv, int argc) {
 	process_activate (thread_current ());
 
 	/* Open executable file. */
-	file = filesys_open (file_name);
+	file = filesys_open (argv[0]);
 	if (file == NULL) {
-		printf ("load: %s: open failed\n", file_name);
+		printf ("load: %s: open failed\n", argv[0]);
 		goto done;
 	}
 
@@ -396,7 +460,7 @@ load (const char *file_name, struct intr_frame *if_, char** argv, int argc) {
 			|| ehdr.e_version != 1
 			|| ehdr.e_phentsize != sizeof (struct Phdr)
 			|| ehdr.e_phnum > 1024) {
-		printf ("load: %s: error loading executable\n", file_name);
+		printf ("load: %s: error loading executable\n", argv[0]);
 		goto done;
 	}
 
@@ -463,28 +527,7 @@ load (const char *file_name, struct intr_frame *if_, char** argv, int argc) {
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
 
-	for (size_t i = 0; i < argc; i++) {
-		if_->rsp -= strlen(argv[i]) + 1;
-		strlcpy(((char**) if_->rsp), argv[i], strlen(argv[i]) + 1);
-		ptr_argv[i] = if_->rsp;
-	}
-	ptr_argv[argc] = 0;
-
-	if_->rsp -= if_->rsp % 8;
-	*((uint8_t*) if_->rsp) = NULL;
-	
-	for (int i = argc; i >= 0; i--) {
-		if_->rsp -= sizeof(char*);
-		*((char **) if_->rsp) = ptr_argv[i];
-	}
-
-	if_->R.rsi = if_->rsp;
-	if_->R.rdi = argc;
-
-	if_->rsp -= sizeof(void*);
-	*((void **) if_->rsp) = NULL;
-
-	success = true;
+	success = load_args (if_, argv, argc);
 
 done:
 	/* We arrive here whether the load is successful or not. */

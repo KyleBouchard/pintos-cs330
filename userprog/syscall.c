@@ -11,8 +11,6 @@
 #include "filesys/filesys.h"
 #include "intrinsic.h"
 
-typedef int pid_t;
-
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
@@ -21,9 +19,9 @@ bool validate_buffer (const void *, size_t);
 
 void halt(void);
 void exit(int status);
-pid_t fork(const char *thread_name);
+tid_t fork(const char *thread_name);
 int exec(const char *cmd_line);
-int wait(pid_t pid);
+int wait(tid_t pid);
 bool create(const char *file, unsigned initial_size);
 bool remove(const char *file);
 int open(const char *file);
@@ -72,7 +70,7 @@ syscall_handler (struct intr_frame *f) {
 	const uint64_t args[] = { f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r9, f->R.r8 };
 	uint64_t status = 0;
 
-	// printf("syscall %d\n", syscall_number);
+	// printf("syscall %d\n", syscall_number); // TODO remove
 
 	switch (syscall_number) {
 	case SYS_HALT:
@@ -133,13 +131,15 @@ halt (void) {
 void
 exit (int status) {
 	printf ("%s: exit(%d)\n", thread_current ()->name, status);
+
 	struct thread_exit_status* exit_status = thread_current ()->exit_status;
-	if (exit_status != NULL)
+	if (exit_status)
 		exit_status->exit_status = status;
+	
 	thread_exit();
 }
 
-pid_t
+tid_t
 fork (const char *thread_name) {
 	if (!validate_string(thread_name))
 		return -1;
@@ -156,8 +156,8 @@ exec (const char *cmd_line) {
 }
 
 int
-wait (pid_t pid) {
-	return process_wait(pid);
+wait (tid_t pid) {
+	return process_wait (pid);
 }
 
 bool
@@ -202,6 +202,8 @@ write (int fd, const void *buffer, unsigned size) {
 		return -1;
 		
 	putbuf(buffer, size);
+
+	return size;
 }
 
 void
