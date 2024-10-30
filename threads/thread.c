@@ -443,7 +443,7 @@ thread_exit (void) {
 		struct list_elem* elem = list_pop_front(&thread_current ()->file_descriptors.list);
 		struct file_descriptor* fd = list_entry(elem, struct file_descriptor, elem);
 		file_close(fd->file);
-		free(fd)
+		free(fd);
 	}
 #endif
 

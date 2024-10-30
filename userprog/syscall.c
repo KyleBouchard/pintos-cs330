@@ -205,7 +205,30 @@ remove (const char *file) {
 
 int
 open (const char *file) {
+	struct file_descriptor *file_descriptor;
+
 	validate_string(file);
+
+	file_descriptor = (struct file_descriptor *)malloc(sizeof(*file_descriptor));
+	if (!file_descriptor)
+		return -1;
+
+	lock_acquire(&io_lock);	
+	file_descriptor->file = filesys_open(file);
+	lock_release(&io_lock);
+
+	if (!file_descriptor->file) {
+		free(file_descriptor);
+		return -1;
+	}
+
+	lock_acquire(&thread_current ()->file_descriptors.next_fd_lock);
+	file_descriptor->fd = thread_current ()->file_descriptors.next_fd++;
+	lock_release(&thread_current ()->file_descriptors.next_fd_lock);
+
+	list_push_back(&thread_current ()->file_descriptors.list, &file_descriptor->elem);
+
+	return file_descriptor->fd;
 }
 
 int
@@ -246,8 +269,8 @@ close (int fd) {
 
 void
 validate_string(const char* str) {
-	for (char* i = str; is_user_vaddr(i); i++) {
-		int64_t ubyte = get_user(i);
+	for (const char *i = str; is_user_vaddr(i); i++) {
+		int64_t ubyte = get_user((const uint8_t *)i);
 
 		if (ubyte < 0)
 			break;
@@ -260,7 +283,7 @@ validate_string(const char* str) {
 
 void
 validate_buffer (const void *buf, size_t size) {
-	uint8_t *i;
+	const uint8_t *i;
 
 	for (i = buf; i < (uint8_t *)buf + size && is_user_vaddr(i) && get_user(i) >= 0; i++);
 

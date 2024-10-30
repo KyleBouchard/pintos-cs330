@@ -54,7 +54,7 @@ struct file_descriptor {
 	struct file *file;                  /* Underlying file pointer */
 	struct list_elem elem;              /* Next file */
 	int fd;
-}
+};
 #endif
 
 /* A kernel thread or user process.
