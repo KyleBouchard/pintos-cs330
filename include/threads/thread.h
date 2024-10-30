@@ -46,6 +46,12 @@ bool thread_exit_status_new(struct thread *thread);
 int thread_exit_status_wait(struct thread_exit_status *exit_status);
 void thread_exit_status_own(struct thread_exit_status *exit_status);
 void thread_exit_status_disown(struct thread_exit_status *exit_status);
+
+struct file_descriptor {
+	struct file *file;                  /* Underlying file pointer */
+	struct list_elem elem;              /* Next file */
+	int fd;
+}
 #endif
 
 /* A kernel thread or user process.
@@ -132,6 +138,12 @@ struct thread {
 	uint64_t *pml4;                     /* Page map level 4 */
 	struct list children; 				/* Children of the process. */
 	struct thread_exit_status* exit_status;		/* Status referenced by parent. */
+	struct {
+		struct list list;
+		int next_fd;
+		struct lock next_fd_lock;
+	} file_descriptors;
+
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */

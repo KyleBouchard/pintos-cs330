@@ -11,6 +11,8 @@
 #include "filesys/filesys.h"
 #include "intrinsic.h"
 
+static struct lock io_lock;
+
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
@@ -56,6 +58,9 @@ syscall_init (void) {
 	 * mode stack. Therefore, we masked the FLAG_FL. */
 	write_msr(MSR_SYSCALL_MASK,
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
+
+	
+	lock_init(&io_lock);
 }
 
 /* The main system call interface */

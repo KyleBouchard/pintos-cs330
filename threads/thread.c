@@ -601,6 +601,10 @@ init_thread (struct thread *t, const char *name, int priority) {
 #ifdef USERPROG
 	list_init(&t->children);
 	t->exit_status = NULL;
+
+	list_init(&t->file_descriptors.list);
+	t->file_descriptors.next_fd = 2;
+	lock_init(&t->file_descriptors.next_fd_lock);
 #endif
 
 	t->magic = THREAD_MAGIC;
