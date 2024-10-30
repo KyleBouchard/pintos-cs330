@@ -438,6 +438,15 @@ thread_exit (void) {
 		list_remove (&thread_current ()->mlfqs.elem);
 	}
 
+#ifdef USERPROG
+	while(!list_empty(&thread_current ()->file_descriptors.list)) {
+		struct list_elem* elem = list_pop_front(&thread_current ()->file_descriptors.list);
+		struct file_descriptor* fd = list_entry(elem, struct file_descriptor, elem);
+		file_close(fd->file);
+		free(fd)
+	}
+#endif
+
 	do_schedule (THREAD_DYING);
 	NOT_REACHED ();
 }

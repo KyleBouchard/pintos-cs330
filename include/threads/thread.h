@@ -11,6 +11,9 @@
 #endif
 #include "fixed-point.h"
 #include "synch.h"
+#ifdef USERPROG
+#include "filesys/file.h"
+#endif
 
 
 /* States in a thread's life cycle. */
