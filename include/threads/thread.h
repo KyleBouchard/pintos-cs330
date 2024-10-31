@@ -148,7 +148,7 @@ struct thread {
 		int next_fd;
 		struct lock next_fd_lock;
 	} file_descriptors;
-
+	struct file *executable_file;
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */

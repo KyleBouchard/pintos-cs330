@@ -89,38 +89,32 @@ initd (void *cmd_line) {
 struct fork_arg {
 	struct thread *thread;
 	struct intr_frame *if_;
-	struct semaphore *fork_done;
+	struct semaphore fork_done;
+	bool success;
 };
 
 /* Clones the current process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
 tid_t
 process_fork (const char *name, struct intr_frame *if_) {
-	struct fork_arg *arg = malloc(sizeof(struct fork_arg));
-	if (!arg)
-		return TID_ERROR;
+	struct fork_arg arg;
 	
-	arg->thread = thread_current ();
-	arg->if_ = if_;
-	
-	struct semaphore fork_done;
-
-	sema_init(&fork_done, 0);
-
-	arg->fork_done = &fork_done;
+	arg.thread = thread_current ();
+	arg.if_ = if_;
+	sema_init(&arg.fork_done, 0);
+	arg.success = false;
 
 	/* Clone current thread to new thread.*/
 	tid_t tid = thread_create (name,
-			PRI_DEFAULT, __do_fork, arg);
+			PRI_DEFAULT, __do_fork, &arg);
 	
 	if (tid == TID_ERROR) {
-		free(arg); // If TID error, arg hasn't been freed.
 		return TID_ERROR;
 	}
 
-	sema_down(&fork_done);
+	sema_down(&arg.fork_done);
 
-	return tid;
+	return arg.success ? tid : TID_ERROR;
 }
 
 #ifndef VM
@@ -176,11 +170,7 @@ __do_fork (void *aux) {
 	struct thread *parent = fork_arg->thread;
 	struct thread *current = thread_current ();
 	struct intr_frame *parent_if = fork_arg->if_;
-	struct semaphore *fork_done = fork_arg->fork_done;
 	bool succ = true;
-
-	// All fields are pointers, so no need for holder.
-	free(fork_arg);
 
 	/* 1. Read the cpu context to local stack. */
 	memcpy (&if_, parent_if, sizeof (struct intr_frame));
@@ -236,11 +226,13 @@ __do_fork (void *aux) {
 
 	/* Finally, switch to the newly created process. */
 	if (succ) {
-		sema_up(fork_done);
+		fork_arg->success = true;
+		sema_up(&fork_arg->fork_done);
 		do_iret (&if_);
 	}
 error:
-	sema_up(fork_done);
+	fork_arg->success = false;
+	sema_up(&fork_arg->fork_done);
 	thread_exit ();
 }
 
@@ -278,7 +270,16 @@ process_exec (void *cmd_line) {
 	}
 
 	/* And then load the binary */
-	success = load (&_if, argv, argc);
+	if (!load (&_if, argv, argc))
+		goto out;
+
+	thread_current ()->executable_file = filesys_open(argv[0]);
+	if (!thread_current ()->executable_file)
+		goto out;
+	
+	file_deny_write (thread_current ()->executable_file);
+	
+	success = true;
 
 out:
 	if (argv)
@@ -362,6 +363,12 @@ process_cleanup (void) {
 #ifdef VM
 	supplemental_page_table_kill (&curr->spt);
 #endif
+
+	if (curr->executable_file) {
+		file_allow_write (curr->executable_file);
+		file_close (curr->executable_file);
+		curr->executable_file = NULL;
+	}
 
 	uint64_t *pml4;
 	/* Destroy the current process's page directory and switch back

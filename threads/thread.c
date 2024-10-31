@@ -614,6 +614,8 @@ init_thread (struct thread *t, const char *name, int priority) {
 	list_init(&t->file_descriptors.list);
 	t->file_descriptors.next_fd = 2;
 	lock_init(&t->file_descriptors.next_fd_lock);
+
+	t->executable_file = NULL;
 #endif
 
 	t->magic = THREAD_MAGIC;

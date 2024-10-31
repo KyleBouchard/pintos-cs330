@@ -170,7 +170,7 @@ exit (int status) {
 	if (exit_status)
 		exit_status->exit_status = status;
 	
-	thread_exit();
+	thread_exit ();
 }
 
 tid_t
