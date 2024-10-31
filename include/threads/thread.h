@@ -55,6 +55,8 @@ struct file_descriptor {
 	struct list_elem elem;              /* Next file */
 	int fd;
 };
+
+struct file_descriptor* thread_find_file_descriptor(int fd);
 #endif
 
 /* A kernel thread or user process.

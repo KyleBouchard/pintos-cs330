@@ -850,4 +850,23 @@ void thread_exit_status_disown(struct thread_exit_status *status) {
 		free(status);
 	}
 }
+
+/* Finds the file descriptor associated with the fd. NULL if not found. */
+struct file_descriptor* thread_find_file_descriptor(int fd) {
+	const struct list_elem *e;
+	struct file_descriptor *file_descriptor;
+
+	for (
+		e = list_begin (&thread_current()->file_descriptors.list);
+		e != list_end (&thread_current()->file_descriptors.list);
+		e = list_next (e)
+	) {
+		file_descriptor = list_entry (e, struct file_descriptor, elem);
+		if (file_descriptor->fd == fd)
+			return file_descriptor;
+	}
+
+	return NULL;
+}
+
 #endif

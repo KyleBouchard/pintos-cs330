@@ -68,6 +68,19 @@ initd (void *cmd_line) {
 
 	process_init ();
 
+	size_t i;
+	for (i = 0; i < sizeof(thread_current ()->name) / sizeof(*thread_current ()->name); ++i) {
+		char cur = ((const char *)cmd_line)[i];
+
+		if (cur == ' ' || cur == '\0') {
+			break;
+		}
+
+		thread_current()->name[i] = cur;
+	}
+
+	thread_current()->name[i] = '\0';
+
 	if (process_exec (cmd_line) < 0)
 		PANIC("Fail to launch initd\n");
 	NOT_REACHED ();
@@ -76,6 +89,7 @@ initd (void *cmd_line) {
 struct fork_arg {
 	struct thread *thread;
 	struct intr_frame *if_;
+	struct semaphore *fork_done;
 };
 
 /* Clones the current process as `name`. Returns the new process's thread id, or
@@ -88,10 +102,25 @@ process_fork (const char *name, struct intr_frame *if_) {
 	
 	arg->thread = thread_current ();
 	arg->if_ = if_;
+	
+	struct semaphore fork_done;
+
+	sema_init(&fork_done, 0);
+
+	arg->fork_done = &fork_done;
 
 	/* Clone current thread to new thread.*/
-	return thread_create (name,
+	tid_t tid = thread_create (name,
 			PRI_DEFAULT, __do_fork, arg);
+	
+	if (tid == TID_ERROR) {
+		free(arg); // If TID error, arg hasn't been freed.
+		return TID_ERROR;
+	}
+
+	sema_down(&fork_done);
+
+	return tid;
 }
 
 #ifndef VM
@@ -107,10 +136,11 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
 	if (is_kern_pte(pte))
-		return false;
+		return true;
 
 	/* 2. Resolve VA from the parent's page map level 4. */
-	parent_page = pml4_get_page (parent->pml4, va);
+	if (!(parent_page = pml4_get_page (parent->pml4, va)))
+		return false;
 
 	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
 	 *    TODO: NEWPAGE. */
@@ -130,6 +160,7 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 		palloc_free_page(newpage);
 		return false;
 	}
+
 	return true;
 }
 #endif
@@ -145,10 +176,15 @@ __do_fork (void *aux) {
 	struct thread *parent = fork_arg->thread;
 	struct thread *current = thread_current ();
 	struct intr_frame *parent_if = fork_arg->if_;
+	struct semaphore *fork_done = fork_arg->fork_done;
 	bool succ = true;
+
+	// All fields are pointers, so no need for holder.
+	free(fork_arg);
 
 	/* 1. Read the cpu context to local stack. */
 	memcpy (&if_, parent_if, sizeof (struct intr_frame));
+	if_.R.rax = 0;
 
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
@@ -171,13 +207,40 @@ __do_fork (void *aux) {
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
 
-	
+	for (
+		const struct list_elem *e = list_begin (&parent->file_descriptors.list);
+		e != list_end (&parent->file_descriptors.list);
+		e = list_next (e)
+	) {
+		struct file_descriptor *parent_file_descriptor = list_entry (e, struct file_descriptor, elem);
+
+		struct file_descriptor *child_file_descriptor = malloc(sizeof (struct file_descriptor));
+		if (!child_file_descriptor) {
+			goto error;
+		}
+
+		child_file_descriptor->file = file_duplicate(parent_file_descriptor->file);
+		if (!child_file_descriptor->file) {
+			free(child_file_descriptor);
+			goto error;
+		}
+
+		child_file_descriptor->fd = parent_file_descriptor->fd;
+
+		list_push_back(&current->file_descriptors.list, &child_file_descriptor->elem);
+	}
+
+	current->file_descriptors.next_fd = parent->file_descriptors.next_fd;
+
 	process_init ();
 
 	/* Finally, switch to the newly created process. */
-	if (succ)
+	if (succ) {
+		sema_up(fork_done);
 		do_iret (&if_);
+	}
 error:
+	sema_up(fork_done);
 	thread_exit ();
 }
 
@@ -201,6 +264,7 @@ process_exec (void *cmd_line) {
 	/* We first kill the current context */
 	process_cleanup ();
 
+	/* Extract arguments */
 	for (
 		arg = strtok_r(cmd_line, " ", &save_ptr);
 		arg;
@@ -211,10 +275,6 @@ process_exec (void *cmd_line) {
 			goto out;
 
 		argv[argc - 1] = arg;
-	}
-
-	if (argc > 0) {
-		strlcpy(thread_current ()->name, argv[0], sizeof (thread_current ()->name));
 	}
 
 	/* And then load the binary */

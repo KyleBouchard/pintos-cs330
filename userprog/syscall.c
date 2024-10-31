@@ -8,8 +8,11 @@
 #include "userprog/process.h"
 #include "threads/flags.h"
 #include "threads/init.h"
+#include "threads/palloc.h"
 #include "filesys/filesys.h"
 #include "intrinsic.h"
+#include "filesys/file.h"
+#include "devices/input.h"
 
 static struct lock io_lock;
 
@@ -181,7 +184,17 @@ int
 exec (const char *cmd_line) {
 	validate_string(cmd_line);
 
-	return process_exec(cmd_line);
+	char *cmd_line_copy = palloc_get_page (0);
+	if (cmd_line_copy == NULL)
+		return -1;
+
+	strlcpy (cmd_line_copy, cmd_line, PGSIZE);
+
+	if (process_exec(cmd_line_copy) < 0)
+		exit(-1);
+	
+	NOT_REACHED()
+	return 0;
 }
 
 int
@@ -233,38 +246,101 @@ open (const char *file) {
 
 int
 filesize (int fd) {
+	struct file_descriptor* file_descriptor = thread_find_file_descriptor(fd);
+	if (!file_descriptor)
+		return -1;
+	
+	int len;
+	lock_acquire(&io_lock);
+	len = file_length(file_descriptor->file);
+	lock_release(&io_lock);
 
+	return len;
 }
 
 int
 read (int fd, void *buffer, unsigned size) {
 	validate_buffer(buffer, size);
+
+	if (fd == 0) {
+		for (size_t i = 0; i < size; i++)
+		{
+			((uint8_t*) buffer)[i] = input_getc();
+		}
+		return size;		
+	}
+
+	struct file_descriptor* file_descriptor = thread_find_file_descriptor(fd);
+	if (!file_descriptor)
+		return -1;
+	
+	unsigned size_read;
+	lock_acquire(&io_lock);
+	size_read = file_read(file_descriptor->file, buffer, size);
+	lock_release(&io_lock);
+
+	return size_read;
+
 }
 
 int
 write (int fd, const void *buffer, unsigned size) {
 	validate_buffer(buffer, size);
 
-	if (fd != 1)
-		return -1;
-		
-	putbuf(buffer, size);
+	if (fd == 1) {
+		putbuf(buffer, size);
+		return size;		
+	}
 
-	return size;
+	struct file_descriptor* file_descriptor = thread_find_file_descriptor(fd);
+	if (!file_descriptor)
+		return -1;
+	
+	unsigned size_wrote;
+	lock_acquire(&io_lock);
+	size_wrote = file_write(file_descriptor->file, buffer, size);
+	lock_release(&io_lock);
+
+	return size_wrote;
 }
 
 void
 seek (int fd, unsigned position) {
-
+	struct file_descriptor* file_descriptor = thread_find_file_descriptor(fd);
+	if (!file_descriptor)
+		return;
+	
+	lock_acquire(&io_lock);
+	file_seek(file_descriptor->file, position);
+	lock_release(&io_lock);
 }
 
 unsigned
 tell (int fd) {
+	struct file_descriptor* file_descriptor = thread_find_file_descriptor(fd);
+	if (!file_descriptor)
+		return 0;
+	
+	unsigned pos;
+	lock_acquire(&io_lock);
+	pos = file_tell(file_descriptor->file);
+	lock_release(&io_lock);
 
+	return pos;
 }
 
 void
 close (int fd) {
+	struct file_descriptor* file_descriptor = thread_find_file_descriptor(fd);
+	if (!file_descriptor)
+		return;
+
+	lock_acquire(&io_lock);
+	file_close(file_descriptor->file);
+	lock_release(&io_lock);
+
+	list_remove(&file_descriptor->elem);
+	free(file_descriptor);
 }
 
 void
