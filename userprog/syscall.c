@@ -9,6 +9,7 @@
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/palloc.h"
+#include "threads/malloc.h"
 #include "filesys/filesys.h"
 #include "intrinsic.h"
 #include "filesys/file.h"
@@ -33,6 +34,7 @@ int write(int fd, const void *buffer, unsigned size);
 void seek(int fd, unsigned position);
 unsigned tell(int fd);
 void close(int fd);
+int dup2(int oldfd, int newfd);
 
 void validate_buffer(const void* ptr, size_t size);
 void validate_string(const char* str);
@@ -81,22 +83,22 @@ syscall_handler (struct intr_frame *f) {
 		exit(args[0]);
 		break;
 	case SYS_FORK:
-		status = fork(args[0], f);
+		status = fork((const char *)args[0], f);
 		break;
 	case SYS_EXEC:
-		status = exec(args[0]);
+		status = exec((const char *)args[0]);
 		break;
 	case SYS_WAIT:
 		status = wait(args[0]);
 		break;
 	case SYS_CREATE:
-		status = create(args[0], args[1]);
+		status = create((const char *)args[0], args[1]);
 		break;
 	case SYS_REMOVE:
-		status = remove(args[0]);
+		status = remove((const char *)args[0]);
 		break;
 	case SYS_OPEN:
-		status = open(args[0]);
+		status = open((const char *)args[0]);
 		break;
 	case SYS_FILESIZE:
 		status = filesize(args[0]);
@@ -115,6 +117,9 @@ syscall_handler (struct intr_frame *f) {
 		break;
 	case SYS_CLOSE:
 		close(args[0]);
+		break;
+	case SYS_DUP2:
+		status = dup2(args[0], args[1]);
 		break;
 	default:
 		status = -1;
@@ -218,26 +223,10 @@ open (const char *file) {
 
 	validate_string(file);
 
-	file_descriptor = (struct file_descriptor *)malloc(sizeof(*file_descriptor));
-	if (!file_descriptor)
-		return -1;
-
-	lock_acquire(&io_lock);	
-	file_descriptor->file = filesys_open(file);
+	lock_acquire(&io_lock);
+	file_descriptor = file_descriptor_open(file);
 	lock_release(&io_lock);
-
-	if (!file_descriptor->file) {
-		free(file_descriptor);
-		return -1;
-	}
-
-	lock_acquire(&thread_current ()->file_descriptors.next_fd_lock);
-	file_descriptor->fd = thread_current ()->file_descriptors.next_fd++;
-	lock_release(&thread_current ()->file_descriptors.next_fd_lock);
-
-	list_push_back(&thread_current ()->file_descriptors.list, &file_descriptor->elem);
-
-	return file_descriptor->fd;
+	return file_descriptor ? file_descriptor->fd : -1;
 }
 
 int
@@ -246,10 +235,12 @@ filesize (int fd) {
 	if (!file_descriptor)
 		return -1;
 	
-	int len;
-	lock_acquire(&io_lock);
-	len = file_length(file_descriptor->file);
-	lock_release(&io_lock);
+	int len = 0;
+	if (file_descriptor->kind == FD_KIND_FILE) {
+		lock_acquire(&io_lock);
+		len = file_length(file_descriptor->file->file);
+		lock_release(&io_lock);
+	}
 
 	return len;
 }
@@ -258,22 +249,26 @@ int
 read (int fd, void *buffer, unsigned size) {
 	validate_buffer(buffer, size);
 
-	if (fd == 0) {
-		for (size_t i = 0; i < size; i++)
-		{
-			((uint8_t*) buffer)[i] = input_getc();
-		}
-		return size;		
-	}
-
 	struct file_descriptor* file_descriptor = thread_find_file_descriptor(fd);
 	if (!file_descriptor)
 		return -1;
 	
 	unsigned size_read;
-	lock_acquire(&io_lock);
-	size_read = file_read(file_descriptor->file, buffer, size);
-	lock_release(&io_lock);
+	switch (file_descriptor->kind) {
+		case FD_KIND_FILE:
+			lock_acquire(&io_lock);
+			size_read = file_read(file_descriptor->file->file, buffer, size);
+			lock_release(&io_lock);
+			break;
+		case FD_KIND_STDIN:
+			for (size_t i = 0; i < size; i++) {
+				((uint8_t*) buffer)[i] = input_getc();
+			}
+			size_read = size;
+			break;
+		default:
+			size_read = 0;
+	}
 
 	return size_read;
 
@@ -283,19 +278,24 @@ int
 write (int fd, const void *buffer, unsigned size) {
 	validate_buffer(buffer, size);
 
-	if (fd == 1) {
-		putbuf(buffer, size);
-		return size;		
-	}
-
 	struct file_descriptor* file_descriptor = thread_find_file_descriptor(fd);
 	if (!file_descriptor)
 		return -1;
 	
 	unsigned size_wrote;
-	lock_acquire(&io_lock);
-	size_wrote = file_write(file_descriptor->file, buffer, size);
-	lock_release(&io_lock);
+	switch (file_descriptor->kind) {
+		case FD_KIND_FILE:
+			lock_acquire(&io_lock);
+			size_wrote = file_write(file_descriptor->file->file, buffer, size);
+			lock_release(&io_lock);
+			break;
+		case FD_KIND_STDOUT:
+			putbuf(buffer, size);
+			size_wrote = size;
+			break;
+		default:
+			size_wrote = 0;
+	}
 
 	return size_wrote;
 }
@@ -306,9 +306,11 @@ seek (int fd, unsigned position) {
 	if (!file_descriptor)
 		return;
 	
-	lock_acquire(&io_lock);
-	file_seek(file_descriptor->file, position);
-	lock_release(&io_lock);
+	if (file_descriptor->kind == FD_KIND_FILE) {
+		lock_acquire(&io_lock);
+		file_seek(file_descriptor->file->file, position);
+		lock_release(&io_lock);
+	}
 }
 
 unsigned
@@ -317,10 +319,12 @@ tell (int fd) {
 	if (!file_descriptor)
 		return 0;
 	
-	unsigned pos;
-	lock_acquire(&io_lock);
-	pos = file_tell(file_descriptor->file);
-	lock_release(&io_lock);
+	unsigned pos = 0;
+	if (file_descriptor->kind == FD_KIND_FILE) {
+		lock_acquire(&io_lock);
+		pos = file_tell(file_descriptor->file->file);
+		lock_release(&io_lock);
+	}
 
 	return pos;
 }
@@ -332,11 +336,22 @@ close (int fd) {
 		return;
 
 	lock_acquire(&io_lock);
-	file_close(file_descriptor->file);
+	file_descriptor_close(file_descriptor);
+	lock_release(&io_lock);
+}
+
+int
+dup2(int oldfd, int newfd) {
+	struct file_descriptor* old = thread_find_file_descriptor(oldfd),
+	                      * new;
+	if (!old)
+		return -1;
+	
+	lock_acquire(&io_lock);
+	new = file_descriptor_duplicate(old, newfd);
 	lock_release(&io_lock);
 
-	list_remove(&file_descriptor->elem);
-	free(file_descriptor);
+	return new ? new->fd : -1;
 }
 
 void

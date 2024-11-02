@@ -50,13 +50,34 @@ int thread_exit_status_wait(struct thread_exit_status *exit_status);
 void thread_exit_status_own(struct thread_exit_status *exit_status);
 void thread_exit_status_disown(struct thread_exit_status *exit_status);
 
-struct file_descriptor {
-	struct file *file;                  /* Underlying file pointer */
-	struct list_elem elem;              /* Next file */
-	int fd;
+enum file_descriptor_kind {
+	FD_KIND_FILE,
+	FD_KIND_STDIN,
+	FD_KIND_STDOUT,
 };
 
+struct file_rc {
+	struct file *file;
+	size_t reference_count;
+	struct lock reference_count_lock;
+};
+
+struct file_descriptor {
+	struct file_rc *file;                  /* Underlying file pointer */
+	struct list_elem elem;              /* Next file */
+	int fd;                             /* File descriptor number */
+	enum file_descriptor_kind kind;
+};
+
+struct file_rc *file_rc_open(const char *);
+struct file_rc *file_rc_clone(struct file_rc *);
+void file_rc_own(struct file_rc *);
+void file_rc_disown(struct file_rc *);
 struct file_descriptor* thread_find_file_descriptor(int fd);
+struct file_descriptor* file_descriptor_open(const char *);
+struct file_descriptor* file_descriptor_reopen(struct file_descriptor*);
+struct file_descriptor* file_descriptor_duplicate(struct file_descriptor* file_descriptor, int fd);
+void file_descriptor_close(struct file_descriptor*);
 #endif
 
 /* A kernel thread or user process.

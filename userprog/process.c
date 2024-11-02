@@ -191,8 +191,14 @@ __do_fork (void *aux) {
 		goto error;
 #endif
 
+	while (!list_empty(&current->file_descriptors.list)) {
+		struct list_elem* elem = list_pop_front(&current->file_descriptors.list);
+		struct file_descriptor* fd = list_entry(elem, struct file_descriptor, elem);
+		file_descriptor_close(fd);
+	}
+
 	for (
-		const struct list_elem *e = list_begin (&parent->file_descriptors.list);
+		struct list_elem *e = list_begin (&parent->file_descriptors.list);
 		e != list_end (&parent->file_descriptors.list);
 		e = list_next (e)
 	) {
@@ -203,13 +209,16 @@ __do_fork (void *aux) {
 			goto error;
 		}
 
-		child_file_descriptor->file = file_duplicate(parent_file_descriptor->file);
-		if (!child_file_descriptor->file) {
-			free(child_file_descriptor);
-			goto error;
+		if (parent_file_descriptor->kind == FD_KIND_FILE) {
+			child_file_descriptor->file = file_rc_clone(parent_file_descriptor->file);
+			if (!child_file_descriptor->file) {
+				free(child_file_descriptor);
+				goto error;
+			}
 		}
 
 		child_file_descriptor->fd = parent_file_descriptor->fd;
+		child_file_descriptor->kind = parent_file_descriptor->kind;
 
 		list_push_back(&current->file_descriptors.list, &child_file_descriptor->elem);
 	}

@@ -15,6 +15,8 @@
 #include "intrinsic.h"
 #ifdef USERPROG
 #include "userprog/process.h"
+#include "filesys/filesys.h"
+#include "filesys/file.h"
 #endif
 
 /* Random value for struct thread's `magic' member.
@@ -321,14 +323,26 @@ thread_create (const char *name, int priority,
 	tid = t->tid = allocate_tid ();
 
 #ifdef USERPROG
+	struct file_descriptor *fd_stdin = NULL, *fd_stdout = NULL;
+
     if (!thread_exit_status_new(t)) {
-		if (thread_mlfqs)
-			list_remove(&t->mlfqs.elem);
-
-		palloc_free_page(t);
-
-		return TID_ERROR;
+		goto err;
 	}
+
+	fd_stdin = (struct file_descriptor *)malloc(sizeof(*fd_stdin));
+	fd_stdout = (struct file_descriptor *)malloc(sizeof(*fd_stdin));
+	if (!fd_stdin || !fd_stdout)
+		goto err;
+	
+	fd_stdin->kind = FD_KIND_STDIN;
+	fd_stdin->file = NULL;
+	fd_stdin->fd = 0;
+    list_push_back (&t->file_descriptors.list, &fd_stdin->elem);
+
+	fd_stdout->kind = FD_KIND_STDOUT;
+	fd_stdout->file = NULL;
+	fd_stdout->fd = 1;
+    list_push_back (&t->file_descriptors.list, &fd_stdout->elem);
 
     thread_exit_status_own (t->exit_status);
     list_push_back (&thread_current ()->children, &t->exit_status->elem);
@@ -352,6 +366,24 @@ thread_create (const char *name, int priority,
 		thread_yield();
 
 	return tid;
+
+err:
+	if (thread_mlfqs)
+		list_remove(&t->mlfqs.elem);
+	
+#ifdef USERPROG
+	thread_exit_status_disown(t->exit_status);
+
+	if (fd_stdin)
+		free(fd_stdin);
+	
+	if (fd_stdout)
+		free(fd_stdout);
+#endif
+
+	palloc_free_page(t);
+
+	return TID_ERROR;
 }
 
 /* Puts the current thread to sleep.  It will not be scheduled
@@ -442,8 +474,7 @@ thread_exit (void) {
 	while(!list_empty(&thread_current ()->file_descriptors.list)) {
 		struct list_elem* elem = list_pop_front(&thread_current ()->file_descriptors.list);
 		struct file_descriptor* fd = list_entry(elem, struct file_descriptor, elem);
-		file_close(fd->file);
-		free(fd);
+		file_descriptor_close(fd);
 	}
 #endif
 
@@ -855,7 +886,7 @@ void thread_exit_status_disown(struct thread_exit_status *status) {
 
 /* Finds the file descriptor associated with the fd. NULL if not found. */
 struct file_descriptor* thread_find_file_descriptor(int fd) {
-	const struct list_elem *e;
+	struct list_elem *e;
 	struct file_descriptor *file_descriptor;
 
 	for (
@@ -869,6 +900,151 @@ struct file_descriptor* thread_find_file_descriptor(int fd) {
 	}
 
 	return NULL;
+}
+
+struct file_rc *file_rc_open(const char *path) {
+	struct file_rc *rc = malloc(sizeof(struct file_rc));
+	if (!rc)
+		return NULL;
+
+	rc->file = filesys_open(path);
+	if (!rc->file) {
+		free(rc);
+		return NULL;
+	}
+
+	lock_init (&rc->reference_count_lock);
+	rc->reference_count = 1;
+
+	return rc;	
+}
+
+struct file_rc *file_rc_clone(struct file_rc *old_rc) {
+	struct file_rc *rc = malloc(sizeof(struct file_rc));
+	if (!rc)
+		return NULL;
+
+	rc->file = file_duplicate(old_rc->file);
+	if (!rc->file) {
+		free(rc);
+		return NULL;
+	}
+
+	lock_init (&rc->reference_count_lock);
+	rc->reference_count = 1;
+
+	return rc;	
+}
+
+void file_rc_own(struct file_rc *rc) {
+	lock_acquire(&rc->reference_count_lock);
+	++rc->reference_count;
+	lock_release(&rc->reference_count_lock);
+}
+
+void file_rc_disown(struct file_rc *rc) {
+	bool shall_free;
+
+	lock_acquire(&rc->reference_count_lock);
+	shall_free = !--rc->reference_count;
+	lock_release(&rc->reference_count_lock);
+
+	if (shall_free) {
+		file_close(rc->file);
+		free(rc);
+	}
+}
+
+
+struct file_descriptor* file_descriptor_open(const char *path) {
+	struct file_descriptor *file_descriptor;
+
+	file_descriptor = (struct file_descriptor *)malloc(sizeof(*file_descriptor));
+	if (!file_descriptor)
+		return NULL;
+	
+	file_descriptor->kind = FD_KIND_FILE;
+
+	file_descriptor->file = file_rc_open(path);
+	if (!file_descriptor->file) {
+		free(file_descriptor);
+		return NULL;
+	}
+
+	lock_acquire(&thread_current ()->file_descriptors.next_fd_lock);
+	do {
+		file_descriptor->fd = thread_current ()->file_descriptors.next_fd++;
+	} while (thread_find_file_descriptor(file_descriptor->fd));	
+	lock_release(&thread_current ()->file_descriptors.next_fd_lock);
+
+	list_push_back(&thread_current ()->file_descriptors.list, &file_descriptor->elem);
+
+	return file_descriptor;
+}
+
+struct file_descriptor* file_descriptor_reopen(struct file_descriptor* old) {
+	struct file_descriptor *file_descriptor;
+
+	ASSERT(old->kind == FD_KIND_FILE);
+
+	file_descriptor = (struct file_descriptor *)malloc(sizeof(*file_descriptor));
+	if (!file_descriptor)
+		return NULL;
+	
+	file_descriptor->kind = FD_KIND_FILE;
+
+	file_descriptor->file = file_rc_clone(old);
+	if (!file_descriptor->file) {
+		free(file_descriptor);
+		return NULL;
+	}
+
+	lock_acquire(&thread_current ()->file_descriptors.next_fd_lock);
+	do {
+		file_descriptor->fd = thread_current ()->file_descriptors.next_fd++;
+	} while (thread_find_file_descriptor(file_descriptor->fd));	
+	lock_release(&thread_current ()->file_descriptors.next_fd_lock);
+
+	list_push_back(&thread_current ()->file_descriptors.list, &file_descriptor->elem);
+
+	return file_descriptor;
+}
+
+struct file_descriptor* file_descriptor_duplicate(struct file_descriptor* file_descriptor, int fd) {
+	struct file_descriptor *clone, *old;
+
+	if (file_descriptor->fd == fd) {
+		return file_descriptor;
+	}
+
+	clone = (struct file_descriptor *)malloc(sizeof(*clone));
+	if (!clone)
+		return NULL;
+
+	clone->kind = file_descriptor->kind;
+	if (clone->kind == FD_KIND_FILE) {
+		clone->file = file_descriptor->file;
+		file_rc_own(clone->file);
+	}
+
+	if ((old = thread_find_file_descriptor (fd))) {
+		file_descriptor_close(old);
+	}
+
+	clone->fd = fd;
+
+	list_push_back(&thread_current ()->file_descriptors.list, &clone->elem);
+
+	return clone;
+}
+
+void file_descriptor_close(struct file_descriptor *file_descriptor) {
+	if (file_descriptor->kind == FD_KIND_FILE)
+		file_rc_disown(file_descriptor->file);
+	
+	list_remove(&file_descriptor->elem);
+
+	free(file_descriptor);
 }
 
 #endif
