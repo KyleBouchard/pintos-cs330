@@ -128,7 +128,7 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	void *newpage;
 	bool writable;
 
-	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
+	/* 1. If the parent_page is kernel page, then return immediately. */
 	if (is_kern_pte(pte))
 		return true;
 
@@ -136,21 +136,21 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	if (!(parent_page = pml4_get_page (parent->pml4, va)))
 		return false;
 
-	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
-	 *    TODO: NEWPAGE. */
+	/* 3. Allocate new PAL_USER page for the child and set result to
+	 *    NEWPAGE. */
 	if (!(newpage = palloc_get_page(PAL_USER)))
 		return false;
 
-	/* 4. TODO: Duplicate parent's page to the new page and
-	 *    TODO: check whether parent's page is writable or not (set WRITABLE
-	 *    TODO: according to the result). */
+	/* 4. Duplicate parent's page to the new page and
+	 *    check whether parent's page is writable or not (set WRITABLE
+	 *    according to the result). */
 	memcpy(newpage, parent_page, PGSIZE);
 	writable = is_writable(pte);
 
 	/* 5. Add new page to child's page table at address VA with WRITABLE
 	 *    permission. */
 	if (!pml4_set_page (current->pml4, va, newpage, writable)) {
-		/* 6. TODO: if fail to insert page, do error handling. */
+		/* 6. if fail to insert page, do error handling. */
 		palloc_free_page(newpage);
 		return false;
 	}
@@ -190,12 +190,6 @@ __do_fork (void *aux) {
 	if (!pml4_for_each (parent->pml4, duplicate_pte, parent))
 		goto error;
 #endif
-
-	/* TODO: Your code goes here.
-	 * TODO: Hint) To duplicate the file object, use `file_duplicate`
-	 * TODO:       in include/filesys/file.h. Note that parent should not return
-	 * TODO:       from the fork() until this function successfully duplicates
-	 * TODO:       the resources of parent.*/
 
 	for (
 		const struct list_elem *e = list_begin (&parent->file_descriptors.list);
@@ -343,10 +337,6 @@ process_wait (tid_t child_tid) {
 void
 process_exit (void) {
 	struct thread *curr = thread_current ();
-	/* TODO: Your code goes here.
-	 * TODO: Implement process termination message (see
-	 * TODO: project2/process_termination.html).
-	 * TODO: We recommend you to implement process resource cleanup here. */
 	if (curr->exit_status != NULL) {
 		sema_up(&curr->exit_status->event);
 		thread_exit_status_disown(curr->exit_status);
@@ -603,9 +593,6 @@ load (struct intr_frame *if_, const char *const *argv, const size_t argc) {
 
 	/* Start address. */
 	if_->rip = ehdr.e_entry;
-
-	/* TODO: Your code goes here.
-	 * TODO: Implement argument passing (see project2/argument_passing.html). */
 
 	success = load_args (if_, argv, argc);
 

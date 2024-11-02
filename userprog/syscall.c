@@ -69,13 +69,9 @@ syscall_init (void) {
 /* The main system call interface */
 void
 syscall_handler (struct intr_frame *f) {
-	// TODO: Your implementation goes here.
-
 	const uint64_t syscall_number = f->R.rax;
 	const uint64_t args[] = { f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r9, f->R.r8 };
 	uint64_t status = 0;
-
-	// printf("syscall %d\n", syscall_number); // TODO remove
 
 	switch (syscall_number) {
 	case SYS_HALT:
