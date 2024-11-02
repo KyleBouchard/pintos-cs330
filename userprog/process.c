@@ -191,6 +191,7 @@ __do_fork (void *aux) {
 		goto error;
 #endif
 
+	// Close all files since STDIN or STDOUT might be closed on parent.
 	while (!list_empty(&current->file_descriptors.list)) {
 		struct list_elem* elem = list_pop_front(&current->file_descriptors.list);
 		struct file_descriptor* fd = list_entry(elem, struct file_descriptor, elem);
