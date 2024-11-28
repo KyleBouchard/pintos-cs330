@@ -121,8 +121,8 @@ spt_insert_page (struct supplemental_page_table *spt, struct page *page) {
 
 void
 spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
-	vm_dealloc_page (page);
 	list_remove(&page->elem);
+	vm_dealloc_page (page);
 	return true;
 }
 
@@ -325,15 +325,14 @@ out:
 
 /* Free the resource hold by the supplemental page table */
 void
-supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
+supplemental_page_table_kill (struct supplemental_page_table *spt) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
 	struct page* page, *copy;
     struct list_elem* e;
-    for (e = list_begin (&spt->pages); e != list_end (&spt->pages);
-            e = list_next (e)) {
-        page = list_entry (e, struct page, elem);
-        list_remove(e);
-        destroy(page);
-    }
+	while (!list_empty(&spt->pages)) {
+		e = list_begin(&spt->pages);
+		page = list_entry (e, struct page, elem);
+		spt_remove_page(spt, page);
+	}
 }
