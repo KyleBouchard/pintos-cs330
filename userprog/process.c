@@ -866,6 +866,7 @@ load_segment (struct file_rc *file_rc, off_t ofs, uint8_t *upage,
 
 		arg_cloneable->aux = arg;
 		arg_cloneable->clone = load_segment_arg_clone;
+		arg_cloneable->free = load_segment_arg_free;
 
 		// Increment refcnt to be decremented lazily.
 		file_rc_own(file_rc);

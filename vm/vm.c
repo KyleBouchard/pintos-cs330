@@ -276,6 +276,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 						goto loop_err;
 					
 					aux_cloneable->clone = orig_aux_cloneable->clone;
+					aux_cloneable->free = orig_aux_cloneable->free;
 				}
 
 				was_claimed = true;
