@@ -35,6 +35,17 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
+struct file_rc {
+	struct file *file;
+	size_t reference_count;
+	struct lock reference_count_lock;
+};
+
+struct file_rc *file_rc_open(const char *);
+struct file_rc *file_rc_clone(struct file_rc *);
+void file_rc_own(struct file_rc *);
+void file_rc_disown(struct file_rc *);
+
 #ifdef USERPROG
 struct thread_exit_status {
 	tid_t pid;							/* Child process stored. */
@@ -56,12 +67,6 @@ enum file_descriptor_kind {
 	FD_KIND_STDOUT,
 };
 
-struct file_rc {
-	struct file *file;
-	size_t reference_count;
-	struct lock reference_count_lock;
-};
-
 struct file_descriptor {
 	struct file_rc *file;                  /* Underlying file pointer */
 	struct list_elem elem;              /* Next file */
@@ -69,10 +74,6 @@ struct file_descriptor {
 	enum file_descriptor_kind kind;
 };
 
-struct file_rc *file_rc_open(const char *);
-struct file_rc *file_rc_clone(struct file_rc *);
-void file_rc_own(struct file_rc *);
-void file_rc_disown(struct file_rc *);
 struct file_descriptor* thread_find_file_descriptor(int fd);
 struct file_descriptor* file_descriptor_open(const char *);
 struct file_descriptor* file_descriptor_reopen(struct file_descriptor*);

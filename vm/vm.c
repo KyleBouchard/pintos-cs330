@@ -5,6 +5,7 @@
 #include "threads/mmu.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
+#include "lib/string.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -44,12 +45,16 @@ static struct frame *vm_evict_frame (void);
  * `vm_alloc_page`. */
 bool
 vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
-		vm_initializer *init, void *aux) {
+		vm_initializer *init, struct cloneable *aux) {
 
 	ASSERT (VM_TYPE(type) != VM_UNINIT)
 
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 	struct page *page = NULL;
+
+	// We must have a way to clone the aux
+	if (aux && !aux->clone)
+		goto err;
 
 	/* Check whether the upage is already occupied or not. */
 	if (spt_find_page (spt, upage) == NULL) {
@@ -61,8 +66,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 			goto err;
 		
 		bool (*initializer)(struct page *, enum vm_type, void *);
-		switch (VM_TYPE(type))
-		{
+		switch (VM_TYPE(type)) {
 			case VM_ANON:
 				initializer = anon_initializer;
 				break;
@@ -72,9 +76,11 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 			default:
 				goto err;
 		}
+
 		uninit_new(page, upage, init, type, aux, initializer);
 		/* TODO: Insert the page into the spt. */
 		spt_insert_page(spt, page);
+
 		return true;
 	}
 err:
@@ -182,12 +188,13 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 	struct page *page = spt_find_page(spt, addr);
 	
 	/* TODO: Validate the fault */
-	if (!page || VM_TYPE(page->operations->type) != VM_UNINIT)
+	if (!page || VM_TYPE(page->operations->type) != VM_UNINIT || !vm_do_claim_page (page)) {
 		return false;
+	}
 
 	/* TODO: Your code goes here */
 
-	return vm_do_claim_page (page);
+	return true;
 }
 
 /* Free the page.
@@ -238,8 +245,81 @@ supplemental_page_table_init (struct supplemental_page_table *spt) {
 
 /* Copy supplemental page table from src to dst */
 bool
-supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
-		struct supplemental_page_table *src UNUSED) {
+supplemental_page_table_copy (struct supplemental_page_table *dst,
+		struct supplemental_page_table *src) {
+	struct list_elem *p;
+	struct page *page, *copy;
+	bool success = false;
+
+	for (p = list_begin (&src->pages); p != list_end (&src->pages); p = list_next (p)) {
+		page = list_entry (p, struct page, elem);
+
+		copy = malloc(sizeof(*copy));
+		if (!copy)
+			goto out;
+
+		bool (*initializer)(struct page *, enum vm_type, void *);
+		vm_initializer *init = NULL;
+		struct cloneable *aux_cloneable = NULL;
+		enum vm_type type = page->operations->type;
+		bool was_claimed = false;
+		switch (VM_TYPE(type)) {
+			case VM_UNINIT: {
+				if (page->uninit.aux) {
+					aux_cloneable = (struct cloneable *)malloc(sizeof(*aux_cloneable));
+					if (!aux_cloneable)
+						goto loop_err;
+					
+					struct cloneable *orig_aux_cloneable = (struct cloneable *)page->uninit.aux;
+					aux_cloneable->aux = orig_aux_cloneable->clone(orig_aux_cloneable->aux);
+					if (!aux_cloneable->aux)
+						goto loop_err;
+					
+					aux_cloneable->clone = orig_aux_cloneable->clone;
+				}
+
+				was_claimed = true;
+				initializer = page->uninit.page_initializer;
+				init = page->uninit.init;
+				type = page->uninit.type;
+				break;
+			}
+			case VM_ANON: {
+				initializer = anon_initializer;
+				break;
+			}
+			case VM_FILE: {
+				initializer = file_backed_initializer;
+				break;
+			}
+			default: {
+				goto loop_err;
+			}
+		}
+
+		uninit_new(copy, page->va, init, type, aux_cloneable, initializer);
+		spt_insert_page(dst, copy);
+
+		if (!was_claimed) {
+			if (!vm_do_claim_page(copy))
+				goto out;
+
+			memcpy(copy->frame->kva, page->frame->kva, PGSIZE);
+		}
+
+		continue;
+loop_err:
+		if (copy)
+			free(copy);
+		if (aux_cloneable)
+			free(aux_cloneable);
+		goto out;
+	}
+
+	success = true;
+
+out:
+	return success;
 }
 
 /* Free the resource hold by the supplemental page table */
@@ -247,4 +327,12 @@ void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+	struct page* page, *copy;
+    struct list_elem* e;
+    for (e = list_begin (&spt->pages); e != list_end (&spt->pages);
+            e = list_next (e)) {
+        page = list_entry (e, struct page, elem);
+        list_remove(e);
+        destroy(page);
+    }
 }

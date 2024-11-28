@@ -902,59 +902,6 @@ struct file_descriptor* thread_find_file_descriptor(int fd) {
 	return NULL;
 }
 
-struct file_rc *file_rc_open(const char *path) {
-	struct file_rc *rc = malloc(sizeof(struct file_rc));
-	if (!rc)
-		return NULL;
-
-	rc->file = filesys_open(path);
-	if (!rc->file) {
-		free(rc);
-		return NULL;
-	}
-
-	lock_init (&rc->reference_count_lock);
-	rc->reference_count = 1;
-
-	return rc;	
-}
-
-struct file_rc *file_rc_clone(struct file_rc *old_rc) {
-	struct file_rc *rc = malloc(sizeof(struct file_rc));
-	if (!rc)
-		return NULL;
-
-	rc->file = file_duplicate(old_rc->file);
-	if (!rc->file) {
-		free(rc);
-		return NULL;
-	}
-
-	lock_init (&rc->reference_count_lock);
-	rc->reference_count = 1;
-
-	return rc;	
-}
-
-void file_rc_own(struct file_rc *rc) {
-	lock_acquire(&rc->reference_count_lock);
-	++rc->reference_count;
-	lock_release(&rc->reference_count_lock);
-}
-
-void file_rc_disown(struct file_rc *rc) {
-	bool shall_free;
-
-	lock_acquire(&rc->reference_count_lock);
-	shall_free = !--rc->reference_count;
-	lock_release(&rc->reference_count_lock);
-
-	if (shall_free) {
-		file_close(rc->file);
-		free(rc);
-	}
-}
-
 
 struct file_descriptor* file_descriptor_open(const char *path) {
 	struct file_descriptor *file_descriptor;
@@ -1048,3 +995,56 @@ void file_descriptor_close(struct file_descriptor *file_descriptor) {
 }
 
 #endif
+
+struct file_rc *file_rc_open(const char *path) {
+	struct file_rc *rc = malloc(sizeof(struct file_rc));
+	if (!rc)
+		return NULL;
+
+	rc->file = filesys_open(path);
+	if (!rc->file) {
+		free(rc);
+		return NULL;
+	}
+
+	lock_init (&rc->reference_count_lock);
+	rc->reference_count = 1;
+
+	return rc;	
+}
+
+struct file_rc *file_rc_clone(struct file_rc *old_rc) {
+	struct file_rc *rc = malloc(sizeof(struct file_rc));
+	if (!rc)
+		return NULL;
+
+	rc->file = file_duplicate(old_rc->file);
+	if (!rc->file) {
+		free(rc);
+		return NULL;
+	}
+
+	lock_init (&rc->reference_count_lock);
+	rc->reference_count = 1;
+
+	return rc;	
+}
+
+void file_rc_own(struct file_rc *rc) {
+	lock_acquire(&rc->reference_count_lock);
+	++rc->reference_count;
+	lock_release(&rc->reference_count_lock);
+}
+
+void file_rc_disown(struct file_rc *rc) {
+	bool shall_free;
+
+	lock_acquire(&rc->reference_count_lock);
+	shall_free = !--rc->reference_count;
+	lock_release(&rc->reference_count_lock);
+
+	if (shall_free) {
+		file_close(rc->file);
+		free(rc);
+	}
+}

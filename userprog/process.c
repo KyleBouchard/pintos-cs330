@@ -99,6 +99,10 @@ tid_t
 process_fork (const char *name, struct intr_frame *if_) {
 	struct fork_arg arg;
 	
+#if VM
+
+#endif
+
 	arg.thread = thread_current ();
 	arg.if_ = if_;
 	sema_init(&arg.fork_done, 0);
@@ -454,7 +458,7 @@ struct ELF64_PHDR {
 
 static bool setup_stack (struct intr_frame *if_);
 static bool validate_segment (const struct Phdr *, struct file *);
-static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
+static bool load_segment (struct file_rc *file_rc, off_t ofs, uint8_t *upage,
 		uint32_t read_bytes, uint32_t zero_bytes,
 		bool writable);
 
@@ -510,7 +514,7 @@ static bool
 load (struct intr_frame *if_, const char *const *argv, const size_t argc) {
 	struct thread *t = thread_current ();
 	struct ELF ehdr;
-	struct file *file = NULL;
+	struct file_rc *file_rc = NULL;
 	off_t file_ofs;
 	bool success = false;
 	int i;
@@ -526,14 +530,14 @@ load (struct intr_frame *if_, const char *const *argv, const size_t argc) {
 	process_activate (thread_current ());
 
 	/* Open executable file. */
-	file = filesys_open (argv[0]);
-	if (file == NULL) {
+	file_rc = file_rc_open (argv[0]);
+	if (file_rc == NULL) {
 		printf ("load: %s: open failed\n", argv[0]);
 		goto done;
 	}
 
 	/* Read and verify executable header. */
-	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
+	if (file_read (file_rc->file, &ehdr, sizeof ehdr) != sizeof ehdr
 			|| memcmp (ehdr.e_ident, "\177ELF\2\1\1", 7)
 			|| ehdr.e_type != 2
 			|| ehdr.e_machine != 0x3E // amd64
@@ -549,11 +553,11 @@ load (struct intr_frame *if_, const char *const *argv, const size_t argc) {
 	for (i = 0; i < ehdr.e_phnum; i++) {
 		struct Phdr phdr;
 
-		if (file_ofs < 0 || file_ofs > file_length (file))
+		if (file_ofs < 0 || file_ofs > file_length (file_rc->file))
 			goto done;
-		file_seek (file, file_ofs);
+		file_seek (file_rc->file, file_ofs);
 
-		if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
+		if (file_read (file_rc->file, &phdr, sizeof phdr) != sizeof phdr)
 			goto done;
 		file_ofs += sizeof phdr;
 		switch (phdr.p_type) {
@@ -569,7 +573,7 @@ load (struct intr_frame *if_, const char *const *argv, const size_t argc) {
 			case PT_SHLIB:
 				goto done;
 			case PT_LOAD:
-				if (validate_segment (&phdr, file)) {
+				if (validate_segment (&phdr, file_rc->file)) {
 					bool writable = (phdr.p_flags & PF_W) != 0;
 					uint64_t file_page = phdr.p_offset & ~PGMASK;
 					uint64_t mem_page = phdr.p_vaddr & ~PGMASK;
@@ -587,7 +591,7 @@ load (struct intr_frame *if_, const char *const *argv, const size_t argc) {
 						read_bytes = 0;
 						zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
 					}
-					if (!load_segment (file, file_page, (void *) mem_page,
+					if (!load_segment (file_rc, file_page, (void *) mem_page,
 								read_bytes, zero_bytes, writable))
 						goto done;
 				}
@@ -608,7 +612,8 @@ load (struct intr_frame *if_, const char *const *argv, const size_t argc) {
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close (file);
+	if (file_rc)
+		file_rc_disown (file_rc);
 	return success;
 }
 
@@ -680,13 +685,13 @@ static bool install_page (void *upage, void *kpage, bool writable);
  * Return true if successful, false if a memory allocation error
  * or disk read error occurs. */
 static bool
-load_segment (struct file *file, off_t ofs, uint8_t *upage,
+load_segment (struct file_rc *file_rc, off_t ofs, uint8_t *upage,
 		uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
 	ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT (pg_ofs (upage) == 0);
 	ASSERT (ofs % PGSIZE == 0);
 
-	file_seek (file, ofs);
+	file_seek (file_rc->file, ofs);
 	while (read_bytes > 0 || zero_bytes > 0) {
 		/* Do calculate how to fill this page.
 		 * We will read PAGE_READ_BYTES bytes from FILE
@@ -700,7 +705,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 			return false;
 
 		/* Load this page. */
-		if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes) {
+		if (file_read (file_rc->file, kpage, page_read_bytes) != (int) page_read_bytes) {
 			palloc_free_page (kpage);
 			return false;
 		}
@@ -761,22 +766,56 @@ install_page (void *upage, void *kpage, bool writable) {
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
+void *load_segment_arg_clone(void *aux);
+
 struct load_segment_arg {
-	struct file *file;
+	struct file_rc *file_rc;
 	off_t read_bytes;
 	off_t start;
 };
 
-static bool
-lazy_load_segment (struct page *page, void *aux) {
-	struct load_segment_arg arg = *(struct load_segment_arg *)aux;
-	free(aux);
+void *load_segment_arg_clone(void *aux) {
+	struct load_segment_arg *arg = (struct load_segment_arg *)aux,
+							*new = (struct load_segment_arg *)malloc(sizeof(struct load_segment_arg));
+	
+	if (!new)
+		return NULL;
 
-	if (arg.read_bytes != file_read_at (arg.file, page->va, arg.read_bytes, arg.start))
-		return false;
+	if (!(new->file_rc = file_rc_clone(arg->file_rc))) {
+		free(new);
+		return NULL;
+	}
+
+	new->start = arg->start;
+	new->read_bytes = arg->read_bytes;
+
+	return new;
+}
+
+void load_segment_arg_free(void *aux) {
+	struct load_segment_arg *arg = (struct load_segment_arg *)aux;
 	
-	memset((uint8_t *)page->va + arg.read_bytes, 0, PGSIZE - arg.read_bytes);
+	file_rc_disown(arg->file_rc);
+
+	free(arg);
+}
+
+static bool
+lazy_load_segment (struct page *page, void *aux_cloneable_raw) {
+	bool success = false;
+	struct load_segment_arg *arg = (struct load_segment_arg *)(((struct cloneable *)aux_cloneable_raw)->aux);
+
+	if (arg->read_bytes != file_read_at (arg->file_rc->file, page->va, arg->read_bytes, arg->start))
+		goto out;
 	
+	memset((uint8_t *)page->va + arg->read_bytes, 0, PGSIZE - arg->read_bytes);
+
+	success = true;
+
+out:
+	file_rc_disown(arg->file_rc);
+	free(arg);
+	return success;
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
@@ -797,7 +836,7 @@ lazy_load_segment (struct page *page, void *aux) {
  * Return true if successful, false if a memory allocation error
  * or disk read error occurs. */
 static bool
-load_segment (struct file *file, off_t ofs, uint8_t *upage,
+load_segment (struct file_rc *file_rc, off_t ofs, uint8_t *upage,
 		uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
 	ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT (pg_ofs (upage) == 0);
@@ -811,17 +850,31 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		struct load_segment_arg *aux = malloc(sizeof(struct load_segment_arg));
-		if (!aux)
+		struct load_segment_arg *arg = malloc(sizeof(struct load_segment_arg));
+		if (!arg)
 			return false;
 		
-		aux->file = file;
-		aux->read_bytes = page_read_bytes;
-		aux->start = ofs;
+		arg->file_rc = file_rc;
+		arg->read_bytes = page_read_bytes;
+		arg->start = ofs;
 
-		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
-					writable, lazy_load_segment, aux))
+		struct cloneable *arg_cloneable = malloc(sizeof(struct cloneable));
+		if (!arg_cloneable) {
+			free(arg);
 			return false;
+		}
+
+		arg_cloneable->aux = arg;
+		arg_cloneable->clone = load_segment_arg_clone;
+
+		// Increment refcnt to be decremented lazily.
+		file_rc_own(file_rc);
+		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
+					writable, lazy_load_segment, arg_cloneable)) {
+			free(arg);
+			free(arg_cloneable);
+			return false;
+		}
 
 		/* Advance. */
 		read_bytes -= page_read_bytes;
