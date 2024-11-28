@@ -761,8 +761,22 @@ install_page (void *upage, void *kpage, bool writable) {
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
+struct load_segment_arg {
+	struct file *file;
+	off_t read_bytes;
+	off_t start;
+};
+
 static bool
 lazy_load_segment (struct page *page, void *aux) {
+	struct load_segment_arg arg = *(struct load_segment_arg *)aux;
+	free(aux);
+
+	if (arg.read_bytes != file_read_at (arg.file, page->va, arg.read_bytes, arg.start))
+		return false;
+	
+	memset((uint8_t *)page->va + arg.read_bytes, 0, PGSIZE - arg.read_bytes);
+	
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
@@ -797,7 +811,14 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
+		struct load_segment_arg *aux = malloc(sizeof(struct load_segment_arg));
+		if (!aux)
+			return false;
+		
+		aux->file = file;
+		aux->read_bytes = page_read_bytes;
+		aux->start = ofs;
+
 		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
 					writable, lazy_load_segment, aux))
 			return false;
@@ -806,6 +827,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += PGSIZE;
 	}
 	return true;
 }
@@ -813,7 +835,6 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 /* Create a PAGE of stack at the USER_STACK. Return true on success. */
 static bool
 setup_stack (struct intr_frame *if_) {
-	bool success = false;
 	void *stack_bottom = (void *) (((uint8_t *) USER_STACK) - PGSIZE);
 
 	/* TODO: Map the stack on stack_bottom and claim the page immediately.
@@ -821,6 +842,16 @@ setup_stack (struct intr_frame *if_) {
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
 
-	return success;
+	if (!vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true))
+		return false;
+	
+	if (!vm_claim_page(stack_bottom)) {
+		// TODO free page?
+		return false;
+	}
+
+	if_->rsp = USER_STACK;
+
+	return true;
 }
 #endif /* VM */
