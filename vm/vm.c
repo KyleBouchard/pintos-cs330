@@ -172,7 +172,24 @@ vm_get_frame (void) {
 
 /* Growing the stack. */
 static void
-vm_stack_growth (void *addr UNUSED) {
+vm_stack_growth (void *addr) {
+	void *base = pg_round_down(addr);
+
+	if (
+		(uintptr_t)base > USER_STACK ||
+		(uintptr_t)base < USER_STACK - (1 << 20) // 1MB
+	)
+		return;
+		
+	while (!spt_find_page(&thread_current ()->spt, base)) {
+		if (
+			!vm_alloc_page(VM_ANON | VM_MARKER_0, base, true) ||
+			!vm_claim_page(base)
+		)
+			return;
+	
+		base = base + PGSIZE;
+	}
 }
 
 /* Handle the fault on write_protected page */
@@ -187,6 +204,42 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 	struct page *page = spt_find_page(spt, addr);
 	
+	// check stack expansion
+	do {
+		bool is_stack_expansion = false;
+
+		// must be user and page must not exist yet
+		if (!user || page)
+			break;
+		
+		uintptr_t candidate = (uintptr_t)addr;
+
+		// we accept anything 8 bytes before rsp
+		if (
+			candidate < f->rsp - 8 ||
+			candidate > USER_STACK ||
+			candidate < USER_STACK - (1 << 20) // 1MB
+		)
+			break;
+		
+		uintptr_t page_base = pg_round_down(candidate);
+		while (page_base < USER_STACK) {
+			page_base += PGSIZE; // skip first page as we already know it isn't present
+
+			page = spt_find_page(spt, (void *)page_base);
+			if (!page)
+				continue;
+			
+			is_stack_expansion = VM_TYPE(page->operations->type) == VM_ANON && (page->anon.type & VM_MARKER_0) != 0;
+			break;
+		}
+
+		if (is_stack_expansion) {
+			vm_stack_growth(addr);
+			return true;
+		}
+	} while (false);
+
 	/* TODO: Validate the fault */
 	if (!page || VM_TYPE(page->operations->type) != VM_UNINIT || !vm_do_claim_page (page)) {
 		return false;
