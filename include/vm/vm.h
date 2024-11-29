@@ -104,16 +104,15 @@ void vm_init (void);
 bool vm_try_handle_fault (struct intr_frame *f, void *addr, bool user,
 		bool write, bool not_present);
 
-struct cloneable {
+struct cloneable_vtable {
 	void *(*clone)(void *);
 	void (*free)(void *);
-	void *aux;
 };
 
 #define vm_alloc_page(type, upage, writable) \
 	vm_alloc_page_with_initializer ((type), (upage), (writable), NULL, NULL)
 bool vm_alloc_page_with_initializer (enum vm_type type, void *upage,
-		bool writable, vm_initializer *init, struct cloneable *aux);
+		bool writable, vm_initializer *init, struct cloneable_vtable **aux);
 void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);

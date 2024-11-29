@@ -65,7 +65,6 @@ uninit_destroy (struct page *page) {
 	struct uninit_page *uninit = &page->uninit;
 	/* TODO: Fill this function.
 	 * TODO: If you don't have anything to do, just return. */
-	struct cloneable* clone = (struct cloneable *) uninit->aux;
-	clone->free(clone->aux);
-	free(clone);
+	struct cloneable_vtable** clone = (struct cloneable_vtable**) uninit->aux;
+	(*clone)->free(clone);
 }

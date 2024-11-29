@@ -767,8 +767,15 @@ install_page (void *upage, void *kpage, bool writable) {
  * upper block. */
 
 void *load_segment_arg_clone(void *aux);
+void load_segment_arg_free(void *aux);
+
+const struct cloneable_vtable load_segment_arg_vtable = {
+	.clone = load_segment_arg_clone,
+	.free = load_segment_arg_free
+};
 
 struct load_segment_arg {
+	struct cloneable_vtable *vt;
 	struct file_rc *file_rc;
 	off_t read_bytes;
 	off_t start;
@@ -786,6 +793,7 @@ void *load_segment_arg_clone(void *aux) {
 		return NULL;
 	}
 
+	new->vt = arg->vt;
 	new->start = arg->start;
 	new->read_bytes = arg->read_bytes;
 
@@ -801,9 +809,9 @@ void load_segment_arg_free(void *aux) {
 }
 
 static bool
-lazy_load_segment (struct page *page, void *aux_cloneable_raw) {
+lazy_load_segment (struct page *page, void *aux) {
 	bool success = false;
-	struct load_segment_arg *arg = (struct load_segment_arg *)(((struct cloneable *)aux_cloneable_raw)->aux);
+	struct load_segment_arg *arg = (struct load_segment_arg *)aux;
 
 	if (arg->read_bytes != file_read_at (arg->file_rc->file, page->va, arg->read_bytes, arg->start))
 		goto out;
@@ -813,8 +821,7 @@ lazy_load_segment (struct page *page, void *aux_cloneable_raw) {
 	success = true;
 
 out:
-	file_rc_disown(arg->file_rc);
-	free(arg);
+	arg->vt.free(arg);
 	return success;
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
@@ -854,26 +861,16 @@ load_segment (struct file_rc *file_rc, off_t ofs, uint8_t *upage,
 		if (!arg)
 			return false;
 		
+		arg->vt = &load_segment_arg_vtable;
 		arg->file_rc = file_rc;
 		arg->read_bytes = page_read_bytes;
 		arg->start = ofs;
 
-		struct cloneable *arg_cloneable = malloc(sizeof(struct cloneable));
-		if (!arg_cloneable) {
-			free(arg);
-			return false;
-		}
-
-		arg_cloneable->aux = arg;
-		arg_cloneable->clone = load_segment_arg_clone;
-		arg_cloneable->free = load_segment_arg_free;
-
 		// Increment refcnt to be decremented lazily.
 		file_rc_own(file_rc);
 		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
-					writable, lazy_load_segment, arg_cloneable)) {
+					writable, lazy_load_segment, arg)) {
 			free(arg);
-			free(arg_cloneable);
 			return false;
 		}
 

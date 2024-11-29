@@ -45,15 +45,15 @@ static struct frame *vm_evict_frame (void);
  * `vm_alloc_page`. */
 bool
 vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
-		vm_initializer *init, struct cloneable *aux) {
+		vm_initializer *init, struct cloneable_vtable **aux) {
 
 	ASSERT (VM_TYPE(type) != VM_UNINIT)
 
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 	struct page *page = NULL;
 
-	// We must have a way to clone the aux
-	if (aux && !aux->clone)
+	// Verify vtable
+	if (aux && !*aux)
 		goto err;
 
 	/* Check whether the upage is already occupied or not. */
@@ -313,23 +313,16 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 
 		bool (*initializer)(struct page *, enum vm_type, void *);
 		vm_initializer *init = NULL;
-		struct cloneable *aux_cloneable = NULL;
+		struct cloneable_vtable **aux = NULL;
 		enum vm_type type = page->operations->type;
 		bool was_claimed = false;
 		switch (VM_TYPE(type)) {
 			case VM_UNINIT: {
 				if (page->uninit.aux) {
-					aux_cloneable = (struct cloneable *)malloc(sizeof(*aux_cloneable));
-					if (!aux_cloneable)
+					struct cloneable_vtable **orig_aux = (struct cloneable_vtable **)page->uninit.aux;
+					aux = (*orig_aux)->clone(orig_aux);
+					if (!aux)
 						goto loop_err;
-					
-					struct cloneable *orig_aux_cloneable = (struct cloneable *)page->uninit.aux;
-					aux_cloneable->aux = orig_aux_cloneable->clone(orig_aux_cloneable->aux);
-					if (!aux_cloneable->aux)
-						goto loop_err;
-					
-					aux_cloneable->clone = orig_aux_cloneable->clone;
-					aux_cloneable->free = orig_aux_cloneable->free;
 				}
 
 				was_claimed = true;
@@ -351,7 +344,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 			}
 		}
 
-		uninit_new(copy, page->va, init, type, aux_cloneable, initializer);
+		uninit_new(copy, page->va, init, type, aux, initializer);
 		spt_insert_page(dst, copy);
 
 		if (!was_claimed) {
@@ -365,8 +358,8 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 loop_err:
 		if (copy)
 			free(copy);
-		if (aux_cloneable)
-			free(aux_cloneable);
+		if (aux)
+			aux->free(aux);
 		goto out;
 	}
 
