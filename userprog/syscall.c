@@ -15,6 +15,9 @@
 #include "filesys/file.h"
 #include "devices/input.h"
 
+#ifdef VM
+#include "vm/file.h"
+#endif
 static struct lock io_lock;
 
 void syscall_entry (void);
@@ -120,6 +123,12 @@ syscall_handler (struct intr_frame *f) {
 		break;
 	case SYS_DUP2:
 		status = dup2(args[0], args[1]);
+		break;
+	case SYS_MMAP:
+		mmap(args[0], args[1], args[2], args[3], args[4]);
+		break;
+	case SYS_MUNMAP:
+		munmap(args[0]);
 		break;
 	default:
 		status = -1;
@@ -352,6 +361,31 @@ dup2(int oldfd, int newfd) {
 	lock_release(&io_lock);
 
 	return new ? new->fd : -1;
+}
+
+void*
+mmap (void *addr, size_t length, int writable, int fd, off_t offset) {
+	if (!is_user_vaddr(addr) || !is_user_vaddr((uintptr_t) addr + length))
+		return NULL;
+
+	#ifdef VM
+		struct file_descriptor* file_descriptor = thread_find_file_descriptor(fd);
+		if (!file_descriptor || file_descriptor->kind != FD_KIND_FILE)
+			return NULL;
+
+		return do_mmap(addr, length, writable, file_descriptor->file->file, offset);
+	#else
+		return NULL;
+	#endif
+}
+
+void
+munmap (void *addr) {
+	#ifdef VM
+		return do_munmap(addr);
+	#else
+		return NULL;
+	#endif
 }
 
 void
