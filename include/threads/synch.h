@@ -45,6 +45,8 @@ void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
 
+extern struct lock io_lock;
+
 /* Optimization barrier.
  *
  * The compiler will not reorder operations across an

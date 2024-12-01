@@ -33,6 +33,7 @@ static void __do_fork (void *);
 static void
 process_init (void) {
 	struct thread *current = thread_current ();
+	current->user_mode = true;
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -281,7 +282,9 @@ process_exec (void *cmd_line) {
 	if (!load (&_if, argv, argc))
 		goto out;
 
+	lock_acquire (&io_lock);
 	thread_current ()->executable_file = filesys_open(argv[0]);
+	lock_release (&io_lock);
 	if (!thread_current ()->executable_file)
 		goto out;
 	
@@ -365,7 +368,8 @@ process_cleanup (void) {
 	struct thread *curr = thread_current ();
 
 #ifdef VM
-	supplemental_page_table_kill (&curr->spt);
+	if (curr->user_mode)
+		supplemental_page_table_kill (&curr->spt);
 #endif
 
 	if (curr->executable_file) {

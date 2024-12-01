@@ -19,7 +19,6 @@
 #include "vm/vm.h"
 #include "vm/file.h"
 #endif
-static struct lock io_lock;
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -69,9 +68,6 @@ syscall_init (void) {
 	 * mode stack. Therefore, we masked the FLAG_FL. */
 	write_msr(MSR_SYSCALL_MASK,
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
-
-	
-	lock_init(&io_lock);
 }
 
 /* The main system call interface */
@@ -219,14 +215,22 @@ bool
 create (const char *file, unsigned initial_size) {
 	validate_string(file);
 
-	return filesys_create(file, initial_size);
+	lock_acquire (&io_lock);
+	bool status = filesys_create(file, initial_size);
+	lock_release (&io_lock);
+
+	return status;
 }
 
 bool
 remove (const char *file) {
 	validate_string(file);
 
-	return filesys_remove(file);
+	lock_acquire (&io_lock);
+	bool status = filesys_remove(file);
+	lock_release (&io_lock);
+
+	return status;
 }
 
 int
@@ -235,9 +239,7 @@ open (const char *file) {
 
 	validate_string(file);
 
-	lock_acquire(&io_lock);
 	file_descriptor = file_descriptor_open(file);
-	lock_release(&io_lock);
 	return file_descriptor ? file_descriptor->fd : -1;
 }
 

@@ -4,6 +4,7 @@
 #include "threads/vaddr.h"
 #include "threads/mmu.h"
 #include "threads/malloc.h"
+#include "threads/mmu.h"
 
 static bool file_backed_swap_in (struct page *page, void *kva);
 static bool file_backed_swap_out (struct page *page);
@@ -41,12 +42,14 @@ file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
 static bool
 file_backed_swap_in (struct page *page, void *kva) {
 	struct file_page *file_page = &page->file;
+	lock_acquire (&io_lock);
 	off_t actual_read_bytes = file_read_at (
 		file_page->file_rc->file,
 		page->frame->kva,
 		file_page->read_bytes,
 		file_page->start
 	);
+	lock_release (&io_lock);
 
 	if (actual_read_bytes < 0)
 		return false;
@@ -63,12 +66,14 @@ file_backed_swap_out (struct page *page) {
 	if (!pml4_is_dirty(thread_current()->pml4, page->va))
 		return true;
 
+	lock_acquire (&io_lock);
 	off_t actual_written_bytes = file_write_at (
 		file_page->file_rc->file,
 		page->va,
 		file_page->read_bytes,
 		file_page->start
 	);
+	lock_release (&io_lock);
 
 	pml4_set_dirty(thread_current()->pml4, page->va, false);
 

@@ -62,6 +62,8 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
 
+struct lock io_lock;
+
 static void kernel_thread (thread_func *, void *aux);
 
 static void idle (void *aux UNUSED);
@@ -179,6 +181,8 @@ thread_init (void) {
 	lock_init (&tid_lock);
 	list_init (&ready_list);
 	list_init (&destruction_req);
+
+	lock_init (&io_lock);
 
 	/* Initialize statistics. */
 	if (thread_mlfqs) {
@@ -346,6 +350,8 @@ thread_create (const char *name, int priority,
 
     thread_exit_status_own (t->exit_status);
     list_push_back (&thread_current ()->children, &t->exit_status->elem);
+
+	t->user_mode = false;
 #endif
 
 	/* Call the kernel_thread if it scheduled.
@@ -1001,7 +1007,9 @@ struct file_rc *file_rc_open(const char *path) {
 	if (!rc)
 		return NULL;
 
+	lock_acquire(&io_lock);
 	rc->file = filesys_open(path);
+	lock_release(&io_lock);
 	if (!rc->file) {
 		free(rc);
 		return NULL;

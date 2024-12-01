@@ -89,6 +89,7 @@ struct page_operations {
  * All designs up to you for this. */
 struct supplemental_page_table {
 	struct list pages;
+	size_t page_count;
 };
 
 #include "threads/thread.h"

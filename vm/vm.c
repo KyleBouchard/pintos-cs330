@@ -6,6 +6,7 @@
 #include "vm/vm.h"
 #include "vm/inspect.h"
 #include "lib/string.h"
+#include "lib/random.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -118,12 +119,14 @@ spt_insert_page (struct supplemental_page_table *spt, struct page *page) {
 		return false;
 
 	list_push_back(spt, &page->elem);
+	++spt->page_count;
 	return true;
 }
 
 void
 spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 	list_remove(&page->elem);
+	--spt->page_count;
 	vm_dealloc_page (page);
 	return true;
 }
@@ -131,20 +134,48 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 /* Get the struct frame, that will be evicted. */
 static struct frame *
 vm_get_victim (void) {
-	struct frame *victim = NULL;
+	struct supplemental_page_table *spt = &thread_current()->spt;
 	 /* TODO: The policy for eviction is up to you. */
+	unsigned long idx = random_ulong() % spt->page_count;
+	
+	struct page *page;
+	struct list_elem *p;
+	for (p = list_begin (&spt->pages); p != list_end (&spt->pages); p = list_next (p)) {
+		page = list_entry (p, struct page, elem);
 
-	return victim;
+		if (idx == 0) {
+			if (page->frame)
+				return page->frame;
+		} else {
+			--idx;
+		}
+	}
+
+	// if we can't find anything after random pick that is swapped in, just find the first one.
+	for (p = list_begin (&spt->pages); p != list_end (&spt->pages); p = list_next (p)) {
+		page = list_entry (p, struct page, elem);
+
+		if (page->frame)
+			return page->frame;
+	}
+
+	return NULL;
 }
 
 /* Evict one page and return the corresponding frame.
  * Return NULL on error.*/
 static struct frame *
 vm_evict_frame (void) {
-	struct frame *victim UNUSED = vm_get_victim ();
+	struct frame *victim = vm_get_victim ();
+	ASSERT(victim);
 	/* TODO: swap out the victim and return the evicted frame. */
 
-	return NULL;
+	swap_out(victim->page);
+	pml4_clear_page(thread_current ()->pml4, victim->page->va);
+	victim->page->frame = NULL;
+	victim->page = NULL;
+
+	return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -162,8 +193,10 @@ vm_get_frame (void) {
 	frame->kva = palloc_get_page(PAL_USER);
 	if (!frame->kva) {
 		free(frame);
-		PANIC ("todo");
+		frame = vm_evict_frame();
 	}
+
+	ASSERT(frame->kva);
 
 	frame->page = NULL;
 
@@ -245,7 +278,7 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 	} while (false);
 
 	/* TODO: Validate the fault */
-	if (!page || VM_TYPE(page->operations->type) != VM_UNINIT || !vm_do_claim_page (page)) {
+	if (!page || !vm_do_claim_page (page)) {
 		return false;
 	}
 
@@ -298,6 +331,7 @@ vm_do_claim_page (struct page *page) {
 void
 supplemental_page_table_init (struct supplemental_page_table *spt) {
 	list_init(&spt->pages);
+	spt->page_count = 0;
 }
 
 /* Copy supplemental page table from src to dst */
@@ -400,7 +434,7 @@ supplemental_page_table_kill (struct supplemental_page_table *spt) {
 	struct page* page, *copy;
     struct list_elem* e;
 	while (!list_empty(&spt->pages)) {
-		e = list_head(&spt->pages);
+		e = list_begin(&spt->pages);
 		page = list_entry (e, struct page, elem);
 		spt_remove_page(spt, page);
 	}

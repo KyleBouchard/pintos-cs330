@@ -161,6 +161,7 @@ struct thread {
 	struct list_elem elem;              /* List element. */
 
 #ifdef USERPROG
+	bool user_mode;
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
 	struct list children; 				/* Children of the process. */
