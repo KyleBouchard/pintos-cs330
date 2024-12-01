@@ -1037,6 +1037,7 @@ void file_rc_own(struct file_rc *rc) {
 }
 
 void file_rc_disown(struct file_rc *rc) {
+	ASSERT(rc->reference_count > 0);
 	bool shall_free;
 
 	lock_acquire(&rc->reference_count_lock);

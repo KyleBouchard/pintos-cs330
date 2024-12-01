@@ -61,7 +61,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		/* TODO: Create the page, fetch the initialier according to the VM type,
 		 * TODO: and then create "uninit" page struct by calling uninit_new. You
 		 * TODO: should modify the field after calling the uninit_new. */
-		page = malloc(sizeof(struct page));
+		page = (struct page *)malloc(sizeof(struct page));
 		if (!page)
 			goto err;
 		
@@ -78,6 +78,8 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		}
 
 		uninit_new(page, upage, init, type, aux, initializer);
+
+		page->writeable = writable;
 		/* TODO: Insert the page into the spt. */
 		spt_insert_page(spt, page);
 
@@ -203,6 +205,8 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 		bool user, bool write, bool not_present) {
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 	struct page *page = spt_find_page(spt, addr);
+	if (page && !page->writeable && write)
+		return false;
 	
 	// check stack expansion
 	do {
@@ -279,7 +283,7 @@ vm_do_claim_page (struct page *page) {
 
 	/* Insert page table entry to map page's VA to frame's PA. */
 	if (
-		!pml4_set_page(thread_current ()->pml4, page->va, frame->kva, true) || // TODO? RW
+		!pml4_set_page(thread_current ()->pml4, page->va, frame->kva, page->writeable) ||
 		!swap_in (page, frame->kva)
 	) {
 		pml4_clear_page(thread_current ()->pml4, page->va);
@@ -315,7 +319,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 		vm_initializer *init = NULL;
 		struct cloneable_vtable **aux = NULL;
 		enum vm_type type = page->operations->type;
-		bool was_claimed = false;
+		bool was_claimed = true;
 		switch (VM_TYPE(type)) {
 			case VM_UNINIT: {
 				if (page->uninit.aux) {
@@ -325,7 +329,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 						goto loop_err;
 				}
 
-				was_claimed = true;
+				was_claimed = false;
 				initializer = page->uninit.page_initializer;
 				init = page->uninit.init;
 				type = page->uninit.type;
@@ -336,7 +340,23 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 				break;
 			}
 			case VM_FILE: {
+				struct mmap_arg *arg = (struct mmap_arg *)malloc(sizeof(struct mmap_arg));
+				if (!arg)
+					goto loop_err;
+				
+				memcpy(&arg->data, &page->file, sizeof(struct file_page));
+				arg->data.file_rc = file_rc_clone(page->file.file_rc);
+				if (!arg->data.file_rc) {
+					free(arg);
+					goto loop_err;
+				}
+
+				arg->vt = &mmap_arg_vtable;
+
+				aux = &(arg->vt);
+
 				initializer = file_backed_initializer;
+				init = mmap_load_page;
 				break;
 			}
 			default: {
@@ -345,9 +365,12 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 		}
 
 		uninit_new(copy, page->va, init, type, aux, initializer);
+
+		copy->writeable = page->writeable;
+
 		spt_insert_page(dst, copy);
 
-		if (!was_claimed) {
+		if (was_claimed) {
 			if (!vm_do_claim_page(copy))
 				goto out;
 
@@ -359,7 +382,7 @@ loop_err:
 		if (copy)
 			free(copy);
 		if (aux)
-			aux->free(aux);
+			(*aux)->free(aux);
 		goto out;
 	}
 
@@ -377,7 +400,7 @@ supplemental_page_table_kill (struct supplemental_page_table *spt) {
 	struct page* page, *copy;
     struct list_elem* e;
 	while (!list_empty(&spt->pages)) {
-		e = list_begin(&spt->pages);
+		e = list_head(&spt->pages);
 		page = list_entry (e, struct page, elem);
 		spt_remove_page(spt, page);
 	}

@@ -16,6 +16,7 @@
 #include "devices/input.h"
 
 #ifdef VM
+#include "vm/vm.h"
 #include "vm/file.h"
 #endif
 static struct lock io_lock;
@@ -38,8 +39,10 @@ void seek(int fd, unsigned position);
 unsigned tell(int fd);
 void close(int fd);
 int dup2(int oldfd, int newfd);
+void* mmap (void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap (void *addr);
 
-void validate_buffer(const void* ptr, size_t size);
+void validate_buffer(const void* ptr, size_t size, bool write);
 void validate_string(const char* str);
 
 /* System call.
@@ -75,7 +78,7 @@ syscall_init (void) {
 void
 syscall_handler (struct intr_frame *f) {
 	const uint64_t syscall_number = f->R.rax;
-	const uint64_t args[] = { f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r9, f->R.r8 };
+	const uint64_t args[] = { f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8, f->R.r9 };
 	uint64_t status = 0;
 
 	switch (syscall_number) {
@@ -125,7 +128,7 @@ syscall_handler (struct intr_frame *f) {
 		status = dup2(args[0], args[1]);
 		break;
 	case SYS_MMAP:
-		mmap(args[0], args[1], args[2], args[3], args[4]);
+		status = mmap(args[0], args[1], args[2], args[3], args[4]);
 		break;
 	case SYS_MUNMAP:
 		munmap(args[0]);
@@ -256,12 +259,12 @@ filesize (int fd) {
 
 int
 read (int fd, void *buffer, unsigned size) {
-	validate_buffer(buffer, size);
+	validate_buffer(buffer, size, true);
 
 	struct file_descriptor* file_descriptor = thread_find_file_descriptor(fd);
 	if (!file_descriptor)
 		return -1;
-	
+
 	unsigned size_read;
 	switch (file_descriptor->kind) {
 		case FD_KIND_FILE:
@@ -280,12 +283,11 @@ read (int fd, void *buffer, unsigned size) {
 	}
 
 	return size_read;
-
 }
 
 int
 write (int fd, const void *buffer, unsigned size) {
-	validate_buffer(buffer, size);
+	validate_buffer(buffer, size, false);
 
 	struct file_descriptor* file_descriptor = thread_find_file_descriptor(fd);
 	if (!file_descriptor)
@@ -365,7 +367,11 @@ dup2(int oldfd, int newfd) {
 
 void*
 mmap (void *addr, size_t length, int writable, int fd, off_t offset) {
-	if (!is_user_vaddr(addr) || !is_user_vaddr((uintptr_t) addr + length))
+	if (
+		!is_user_vaddr(addr) || // start
+		!is_user_vaddr((uintptr_t) addr + length) || // end
+		(uintptr_t)addr > (uintptr_t)addr + length // overflow
+	)
 		return NULL;
 
 	#ifdef VM
@@ -373,7 +379,7 @@ mmap (void *addr, size_t length, int writable, int fd, off_t offset) {
 		if (!file_descriptor || file_descriptor->kind != FD_KIND_FILE)
 			return NULL;
 
-		return do_mmap(addr, length, writable, file_descriptor->file->file, offset);
+		return do_mmap(addr, length, writable, file_descriptor->file, offset);
 	#else
 		return NULL;
 	#endif
@@ -403,10 +409,24 @@ validate_string(const char* str) {
 }
 
 void
-validate_buffer (const void *buf, size_t size) {
+validate_buffer (const void *buf, size_t size, bool write) {
 	const uint8_t *i;
 
-	for (i = buf; i < (uint8_t *)buf + size && is_user_vaddr(i) && get_user(i) >= 0; i++);
+
+#ifdef VM
+	struct page *last_page = NULL;
+#endif
+	for (i = buf; i < (uint8_t *)buf + size && is_user_vaddr(i) && (write ? put_user(i, 0) : get_user(i) >= 0); i++) {
+#ifdef VM
+		if (write) {
+			struct page *page = spt_find_page(&thread_current()->spt, i);
+			if (page != last_page && page && !page->writeable)
+				break;
+
+			last_page = page;
+		}
+#endif
+	}
 
 	if (i < (uint8_t *)buf + size) {
 		exit(-1);

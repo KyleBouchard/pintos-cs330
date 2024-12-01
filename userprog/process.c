@@ -775,7 +775,7 @@ const struct cloneable_vtable load_segment_arg_vtable = {
 };
 
 struct load_segment_arg {
-	struct cloneable_vtable *vt;
+	const struct cloneable_vtable *vt;
 	struct file_rc *file_rc;
 	off_t read_bytes;
 	off_t start;
@@ -813,15 +813,15 @@ lazy_load_segment (struct page *page, void *aux) {
 	bool success = false;
 	struct load_segment_arg *arg = (struct load_segment_arg *)aux;
 
-	if (arg->read_bytes != file_read_at (arg->file_rc->file, page->va, arg->read_bytes, arg->start))
+	if (arg->read_bytes != file_read_at (arg->file_rc->file, page->frame->kva, arg->read_bytes, arg->start))
 		goto out;
 	
-	memset((uint8_t *)page->va + arg->read_bytes, 0, PGSIZE - arg->read_bytes);
+	memset((uint8_t *)page->frame->kva + arg->read_bytes, 0, PGSIZE - arg->read_bytes);
 
 	success = true;
 
 out:
-	arg->vt.free(arg);
+	arg->vt->free(arg);
 	return success;
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
@@ -857,7 +857,7 @@ load_segment (struct file_rc *file_rc, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		struct load_segment_arg *arg = malloc(sizeof(struct load_segment_arg));
+		struct load_segment_arg *arg = (struct load_segment_arg *)malloc(sizeof(struct load_segment_arg));
 		if (!arg)
 			return false;
 		
@@ -869,7 +869,7 @@ load_segment (struct file_rc *file_rc, off_t ofs, uint8_t *upage,
 		// Increment refcnt to be decremented lazily.
 		file_rc_own(file_rc);
 		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
-					writable, lazy_load_segment, arg)) {
+					writable, lazy_load_segment, &(arg->vt))) {
 			free(arg);
 			return false;
 		}
