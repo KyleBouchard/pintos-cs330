@@ -19,7 +19,6 @@ vm_init (void) {
 #endif
 	register_inspect_intr ();
 	/* DO NOT MODIFY UPPER LINES. */
-	/* TODO: Your code goes here. */
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -59,9 +58,9 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 
 	/* Check whether the upage is already occupied or not. */
 	if (spt_find_page (spt, upage) == NULL) {
-		/* TODO: Create the page, fetch the initialier according to the VM type,
-		 * TODO: and then create "uninit" page struct by calling uninit_new. You
-		 * TODO: should modify the field after calling the uninit_new. */
+		/* Create the page, fetch the initialier according to the VM type,
+		 * and then create "uninit" page struct by calling uninit_new. You
+		 * should modify the field after calling the uninit_new. */
 		page = (struct page *)malloc(sizeof(struct page));
 		if (!page)
 			goto err;
@@ -81,7 +80,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		uninit_new(page, upage, init, type, aux, initializer);
 
 		page->writeable = writable;
-		/* TODO: Insert the page into the spt. */
+		/* Insert the page into the spt. */
 		spt_insert_page(spt, page);
 
 		return true;
@@ -114,7 +113,7 @@ spt_find_page (struct supplemental_page_table *spt, void *va) {
 /* Insert PAGE into spt with validation. */
 bool
 spt_insert_page (struct supplemental_page_table *spt, struct page *page) {
-	/* TODO: Fill this function. */
+	/* Fill this function. */
 	if (spt_find_page (spt, page->va))
 		return false;
 
@@ -135,7 +134,7 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 static struct frame *
 vm_get_victim (void) {
 	struct supplemental_page_table *spt = &thread_current()->spt;
-	 /* TODO: The policy for eviction is up to you. */
+	 /* The policy for eviction is up to you. */
 	unsigned long idx = random_ulong() % spt->page_count;
 	
 	struct page *page;
@@ -168,7 +167,7 @@ static struct frame *
 vm_evict_frame (void) {
 	struct frame *victim = vm_get_victim ();
 	ASSERT(victim);
-	/* TODO: swap out the victim and return the evicted frame. */
+	/* swap out the victim and return the evicted frame. */
 
 	swap_out(victim->page);
 	pml4_clear_page(thread_current ()->pml4, victim->page->va);
@@ -185,7 +184,6 @@ vm_evict_frame (void) {
 static struct frame *
 vm_get_frame (void) {
 	struct frame *frame = (struct frame *)malloc(sizeof(struct frame));
-	/* TODO: Fill this function. */
 	
 	if (!frame)
 		return NULL;
@@ -277,12 +275,10 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 		}
 	} while (false);
 
-	/* TODO: Validate the fault */
+	/* Validate the fault */
 	if (!page || !vm_do_claim_page (page)) {
 		return false;
 	}
-
-	/* TODO: Your code goes here */
 
 	return true;
 }
@@ -319,8 +315,10 @@ vm_do_claim_page (struct page *page) {
 		!pml4_set_page(thread_current ()->pml4, page->va, frame->kva, page->writeable) ||
 		!swap_in (page, frame->kva)
 	) {
+		swap_out(page);
 		pml4_clear_page(thread_current ()->pml4, page->va);
-		free(frame); // TODO wtf is this? garbage
+		palloc_free_page(frame->kva);
+		free(frame);
 		return false;
 	}
 
@@ -429,8 +427,8 @@ out:
 /* Free the resource hold by the supplemental page table */
 void
 supplemental_page_table_kill (struct supplemental_page_table *spt) {
-	/* TODO: Destroy all the supplemental_page_table hold by thread and
-	 * TODO: writeback all the modified contents to the storage. */
+	/* Destroy all the supplemental_page_table hold by thread and
+	 * writeback all the modified contents to the storage. */
 	struct page* page, *copy;
     struct list_elem* e;
 	while (!list_empty(&spt->pages)) {
