@@ -99,10 +99,6 @@ struct fork_arg {
 tid_t
 process_fork (const char *name, struct intr_frame *if_) {
 	struct fork_arg arg;
-	
-#if VM
-
-#endif
 
 	arg.thread = thread_current ();
 	arg.if_ = if_;
